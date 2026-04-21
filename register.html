@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShadeParse — Operator Registration</title>
+  <script>
+    /* Sync theme before paint */
+    (function() {
+      var t = localStorage.getItem('sp_theme');
+      if (t !== 'dark' && t !== 'light') t = 'light';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/login.css" />
+  <style>
+    html { visibility: hidden; }
+    html.sp-visible { visibility: visible; }
+    body { opacity: 0; transition: opacity .35s ease; }
+    body.sp-ready { opacity: 1; }
+
+    /* ── REGISTER-SPECIFIC OVERRIDES ── */
+
+    /* Allow vertical scroll on register since form is taller */
+    html, body { overflow-y: auto; }
+
+    .login-wrap {
+      min-height: 100vh;
+      padding: 40px 16px;
+    }
+
+    /* Slightly narrower inner gap to keep tight */
+    .login-form { gap: 16px; }
+
+    /* ── DIVIDER ── */
+    .form-divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 2px 0;
+    }
+    .form-divider span {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: .2em;
+      color: var(--text2);
+      white-space: nowrap;
+    }
+    .form-divider::before,
+    .form-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: rgba(79,143,255,.15);
+    }
+
+    /* ── STRENGTH BAR ── */
+    .strength-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .strength-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .strength-label span {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: .15em;
+      color: var(--text2);
+    }
+    .strength-text {
+      transition: color .3s;
+    }
+    .strength-bar {
+      display: flex;
+      gap: 4px;
+    }
+    .strength-seg {
+      flex: 1;
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(255,255,255,.07);
+      transition: background .3s, box-shadow .3s;
+    }
+    .strength-seg.active-1 { background: #ff4d6a; box-shadow: 0 0 6px rgba(255,77,106,.5); }
+    .strength-seg.active-2 { background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,.5); }
+    .strength-seg.active-3 { background: #10b981; box-shadow: 0 0 6px rgba(16,185,129,.5); }
+    .strength-seg.active-4 { background: #4f8fff; box-shadow: 0 0 6px rgba(79,143,255,.5); }
+
+    /* ── AGREE ROW ── */
+    .agree-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+    }
+    .agree-row .check-wrap {
+      align-items: flex-start;
+    }
+    .agree-row .check-label {
+      font-size: 10px;
+      line-height: 1.6;
+      color: var(--text2);
+    }
+    .agree-row a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(79,143,255,.3);
+      transition: border-color .2s;
+    }
+    .agree-row a:hover {
+      border-color: var(--accent);
+    }
+
+    /* ── SIGN IN LINK ── */
+    .signin-link {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: .1em;
+      color: var(--text2);
+      text-align: center;
+    }
+    .signin-link a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(79,143,255,.3);
+      transition: border-color .2s;
+    }
+    .signin-link a:hover {
+      border-color: var(--accent);
+    }
+
+    /* ── INPUT ROW (2-col) ── */
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* ── SUCCESS OVERLAY OVERRIDES ── */
+    .success-text-reg { display: none; }
+    .success-sub-reg  { display: none; }
+
+    /* ── FIELD MATCH INDICATOR ── */
+    .field-match-icon {
+      position: absolute;
+      right: 10px;
+      width: 16px;
+      height: 16px;
+      opacity: 0;
+      transition: opacity .3s;
+      pointer-events: none;
+    }
+    .field-match-icon.show { opacity: 1; }
+    .match-ok  { color: #2ecc89; }
+    .match-err { color: #ff4d6a; }
+  </style>
+</head>
+<body>
+
+<!-- Animated canvas background -->
+<canvas id="bgCanvas"></canvas>
+
+<!-- Grid overlay -->
+<div class="grid-overlay"></div>
+
+<!-- Scanlines -->
+<div class="scanlines"></div>
+
+<!-- Corners -->
+<div class="corner tl"></div>
+<div class="corner tr"></div>
+<div class="corner bl"></div>
+<div class="corner br"></div>
+
+<!-- Register card -->
+<div class="login-wrap" id="loginWrap">
+
+  <div class="brand-block">
+    <div class="brand-logo">
+      <div class="logo-hex">
+        <svg viewBox="0 0 48 48" fill="none">
+          <polygon points="24,3 44,15 44,33 24,45 4,33 4,15"
+            stroke="#4f8fff" stroke-width="1.5" fill="rgba(79,143,255,0.08)"/>
+          <text x="24" y="30" text-anchor="middle" font-size="14"
+            font-weight="700" fill="#4f8fff" font-family="Space Mono">SP</text>
+        </svg>
+      </div>
+    </div>
+    <div class="brand-name" id="typingTarget"></div>
+    <div class="brand-sub">ENTERPRISE SECURITY PLATFORM</div>
+    <div class="brand-ver">v4.0.0 — OPERATOR ENROLLMENT</div>
+  </div>
+
+  <form class="login-form" id="registerForm" autocomplete="off" novalidate>
+
+    <!-- ── ROW: First / Last ── -->
+    <div class="field-row">
+      <div class="field-wrap">
+        <label class="field-label">FIRST NAME</label>
+        <div class="field-inner">
+          <svg class="field-icon" viewBox="0 0 20 20">
+            <path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" fill="currentColor"/>
+          </svg>
+          <input type="text" id="firstNameInput" class="field-input"
+            placeholder="First" autocomplete="off" spellcheck="false" />
+          <div class="field-scan"></div>
+        </div>
+      </div>
+
+      <div class="field-wrap">
+        <label class="field-label">LAST NAME</label>
+        <div class="field-inner">
+          <svg class="field-icon" viewBox="0 0 20 20">
+            <path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" fill="currentColor"/>
+          </svg>
+          <input type="text" id="lastNameInput" class="field-input"
+            placeholder="Last" autocomplete="off" spellcheck="false" />
+          <div class="field-scan"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── OPERATOR ID ── -->
+    <div class="field-wrap">
+      <label class="field-label">OPERATOR ID</label>
+      <div class="field-inner">
+        <svg class="field-icon" viewBox="0 0 20 20">
+          <path d="M2 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5zm2 6h2v4H4v-4zm4 0h2v4H8v-4zm4 0h2v4h-2v-4z"
+            fill="currentColor"/>
+        </svg>
+        <input type="text" id="usernameInput" class="field-input"
+          placeholder="Choose a unique handle" autocomplete="off" spellcheck="false" />
+        <div class="field-scan"></div>
+      </div>
+    </div>
+
+    <!-- ── EMAIL ── -->
+    <div class="field-wrap">
+      <label class="field-label">EMAIL ADDRESS</label>
+      <div class="field-inner">
+        <svg class="field-icon" viewBox="0 0 20 20">
+          <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884zM18 8.118l-8 4-8-4V14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8.118z"
+            fill="currentColor"/>
+        </svg>
+        <input type="email" id="emailInput" class="field-input"
+          placeholder="operator@domain.mil" autocomplete="off" />
+        <div class="field-scan"></div>
+      </div>
+    </div>
+
+    <div class="form-divider"><span>ACCESS CREDENTIALS</span></div>
+
+    <!-- ── PASSWORD ── -->
+    <div class="field-wrap">
+      <label class="field-label">ACCESS CODE</label>
+      <div class="field-inner">
+        <svg class="field-icon" viewBox="0 0 20 20">
+          <path d="M10 1a4 4 0 0 1 4 4v1h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1V5a4 4 0 0 1 4-4zm0 9a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm0-7a2 2 0 0 0-2 2v1h4V5a2 2 0 0 0-2-2z"
+            fill="currentColor"/>
+        </svg>
+        <input type="password" id="passwordInput" class="field-input"
+          placeholder="Min 8 chars" autocomplete="new-password" />
+        <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1">
+          <svg id="eyeIcon" viewBox="0 0 20 20">
+            <path d="M10 3C5 3 1.73 7.11 1 10c.73 2.89 4 7 9 7s8.27-4.11 9-7c-.73-2.89-4-7-9-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"
+              fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="field-scan"></div>
+      </div>
+
+      <!-- Strength meter -->
+      <div class="strength-wrap" id="strengthWrap" style="display:none">
+        <div class="strength-label">
+          <span>CODE STRENGTH</span>
+          <span class="strength-text" id="strengthText">—</span>
+        </div>
+        <div class="strength-bar">
+          <div class="strength-seg" id="seg1"></div>
+          <div class="strength-seg" id="seg2"></div>
+          <div class="strength-seg" id="seg3"></div>
+          <div class="strength-seg" id="seg4"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CONFIRM PASSWORD ── -->
+    <div class="field-wrap">
+      <label class="field-label">CONFIRM ACCESS CODE</label>
+      <div class="field-inner">
+        <svg class="field-icon" viewBox="0 0 20 20">
+          <path d="M10 1a4 4 0 0 1 4 4v1h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1V5a4 4 0 0 1 4-4zm0 9a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm0-7a2 2 0 0 0-2 2v1h4V5a2 2 0 0 0-2-2z"
+            fill="currentColor"/>
+        </svg>
+        <input type="password" id="confirmInput" class="field-input"
+          placeholder="Re-enter access code" autocomplete="new-password" />
+        <!-- Match indicator -->
+        <svg class="field-match-icon match-ok" id="matchOk" viewBox="0 0 20 20">
+          <path d="M16.707 5.293a1 1 0 0 1 0 1.414l-7 7a1 1 0 0 1-1.414 0l-3-3a1 1 0 1 1 1.414-1.414L9 11.586l6.293-6.293a1 1 0 0 1 1.414 0z" fill="currentColor"/>
+        </svg>
+        <svg class="field-match-icon match-err" id="matchErr" viewBox="0 0 20 20" style="display:none">
+          <path d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414z" fill="currentColor"/>
+        </svg>
+        <div class="field-scan"></div>
+      </div>
+    </div>
+
+    <!-- ── AGREE ── -->
+    <div class="agree-row">
+      <label class="check-wrap">
+        <input type="checkbox" id="agreeCheck" />
+        <span class="check-box"></span>
+        <span class="check-label">
+          I acknowledge this is a classified system and agree to the
+          <a href="#">Terms of Operation</a> and
+          <a href="#">Security Protocol</a>
+        </span>
+      </label>
+    </div>
+
+    <!-- ── ERROR ── -->
+    <div class="error-msg" id="errorMsg"></div>
+
+    <!-- ── SUBMIT ── -->
+    <button type="submit" class="login-btn" id="registerBtn">
+      <span class="btn-text" id="btnText">REGISTER OPERATOR</span>
+      <div class="btn-loader" id="btnLoader">
+        <span></span><span></span><span></span>
+      </div>
+      <div class="btn-glow"></div>
+    </button>
+
+    <!-- ── SIGN IN LINK ── -->
+    <div class="signin-link">
+      ALREADY ENROLLED? <a href="login.html">AUTHENTICATE HERE</a>
+    </div>
+
+  </form>
+
+  <div class="login-footer">
+    <span>SHADEPARSE SECURITY SYSTEMS</span>
+    <span class="dot-sep"></span>
+    <span>UNAUTHORIZED ACCESS PROHIBITED</span>
+  </div>
+
+</div>
+
+<!-- Success overlay -->
+<div class="success-overlay" id="successOverlay">
+  <div class="success-ring">
+    <svg viewBox="0 0 80 80">
+      <circle cx="40" cy="40" r="36" stroke="#4f8fff" stroke-width="2"
+        fill="none" stroke-dasharray="226" stroke-dashoffset="226" class="ring-circle"/>
+    </svg>
+    <div class="success-check">
+      <svg viewBox="0 0 24 24">
+        <polyline points="20,6 9,17 4,12" stroke="#4f8fff" stroke-width="2"
+          fill="none" stroke-linecap="round" stroke-linejoin="round" class="check-line"/>
+      </svg>
+    </div>
+  </div>
+  <div class="success-text">OPERATOR ENROLLED</div>
+  <div class="success-sub">Redirecting to login...</div>
+</div>
+
+<script>
+/* ══════════════════════════════════════
+   Canvas background (same particle system as login)
+══════════════════════════════════════ */
+(function() {
+  var canvas = document.getElementById('bgCanvas');
+  var ctx = canvas.getContext('2d');
+  var W, H, particles = [];
+  var ACCENT = '79,143,255';
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+
+  function spawnParticles(n) {
+    for (var i = 0; i < n; i++) {
+      particles.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        r: Math.random() * 1.2 + .3,
+        vx: (Math.random() - .5) * .3,
+        vy: (Math.random() - .5) * .3,
+        a: Math.random()
+      });
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // connections
+    for (var i = 0; i < particles.length; i++) {
+      for (var j = i + 1; j < particles.length; j++) {
+        var dx = particles[i].x - particles[j].x;
+        var dy = particles[i].y - particles[j].y;
+        var dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 120) {
+          ctx.beginPath();
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.strokeStyle = 'rgba(' + ACCENT + ',' + (.12 * (1 - dist/120)) + ')';
+          ctx.lineWidth = .5;
+          ctx.stroke();
+        }
+      }
+    }
+
+    // dots
+    particles.forEach(function(p) {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+      if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
+      p.a += .005;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(' + ACCENT + ',' + (.4 + .3 * Math.sin(p.a)) + ')';
+      ctx.fill();
+    });
+
+    requestAnimationFrame(draw);
+  }
+
+  resize();
+  spawnParticles(60);
+  draw();
+  window.addEventListener('resize', function() {
+    resize();
+    if (particles.length < 60) spawnParticles(60 - particles.length);
+  });
+})();
+
+/* ══════════════════════════════════════
+   Typing animation
+══════════════════════════════════════ */
+(function() {
+  var el = document.getElementById('typingTarget');
+  var text = 'SHADEPARSE';
+  var i = 0;
+  function type() {
+    if (i <= text.length) {
+      el.textContent = text.slice(0, i++);
+      setTimeout(type, 80);
+    }
+  }
+  setTimeout(type, 200);
+})();
+
+/* ══════════════════════════════════════
+   Password toggle
+══════════════════════════════════════ */
+document.getElementById('pwToggle').addEventListener('click', function() {
+  var inp = document.getElementById('passwordInput');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+});
+
+/* ══════════════════════════════════════
+   Password strength
+══════════════════════════════════════ */
+document.getElementById('passwordInput').addEventListener('input', function() {
+  var val = this.value;
+  var wrap = document.getElementById('strengthWrap');
+  var textEl = document.getElementById('strengthText');
+  var segs = [
+    document.getElementById('seg1'),
+    document.getElementById('seg2'),
+    document.getElementById('seg3'),
+    document.getElementById('seg4')
+  ];
+
+  if (!val) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'flex';
+
+  var score = 0;
+  if (val.length >= 8)  score++;
+  if (/[A-Z]/.test(val) && /[a-z]/.test(val)) score++;
+  if (/\d/.test(val))   score++;
+  if (/[^A-Za-z0-9]/.test(val)) score++;
+
+  var labels = ['', 'WEAK', 'MODERATE', 'STRONG', 'MAXIMUM'];
+  var colors = ['', '#ff4d6a', '#f59e0b', '#10b981', '#4f8fff'];
+
+  textEl.textContent = labels[score];
+  textEl.style.color = colors[score];
+
+  segs.forEach(function(s, idx) {
+    s.className = 'strength-seg';
+    if (idx < score) {
+      s.classList.add('active-' + score);
+    }
+  });
+
+  // also re-check confirm
+  checkMatch();
+});
+
+/* ══════════════════════════════════════
+   Password match
+══════════════════════════════════════ */
+function checkMatch() {
+  var pw  = document.getElementById('passwordInput').value;
+  var cpw = document.getElementById('confirmInput').value;
+  var ok  = document.getElementById('matchOk');
+  var err = document.getElementById('matchErr');
+
+  if (!cpw) {
+    ok.classList.remove('show'); ok.style.display = '';
+    err.classList.remove('show'); err.style.display = 'none';
+    return;
+  }
+
+  if (pw === cpw) {
+    err.style.display = 'none'; err.classList.remove('show');
+    ok.style.display  = '';    ok.classList.add('show');
+  } else {
+    ok.style.display  = '';    ok.classList.remove('show');
+    err.style.display = '';    err.classList.add('show');
+  }
+}
+
+document.getElementById('confirmInput').addEventListener('input', checkMatch);
+
+/* ══════════════════════════════════════
+   Form submission
+══════════════════════════════════════ */
+document.getElementById('registerForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+
+  var first    = document.getElementById('firstNameInput').value.trim();
+  var last     = document.getElementById('lastNameInput').value.trim();
+  var username = document.getElementById('usernameInput').value.trim();
+  var email    = document.getElementById('emailInput').value.trim();
+  var pw       = document.getElementById('passwordInput').value;
+  var cpw      = document.getElementById('confirmInput').value;
+  var clearance= document.getElementById('clearanceSelect').value;
+  var agree    = document.getElementById('agreeCheck').checked;
+  var errEl    = document.getElementById('errorMsg');
+  var form     = document.getElementById('registerForm');
+  var btn      = document.getElementById('registerBtn');
+
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.classList.add('show');
+    form.classList.add('shake');
+    setTimeout(function() { form.classList.remove('shake'); }, 400);
+  }
+
+  errEl.classList.remove('show');
+
+  if (!first || !last)        return showError('⚠  Operator name is required.');
+  if (!username)              return showError('⚠  Operator ID is required.');
+  if (username.length < 3)   return showError('⚠  Operator ID must be at least 3 characters.');
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+                              return showError('⚠  A valid email address is required.');
+  if (pw.length < 8)         return showError('⚠  Access code must be at least 8 characters.');
+  if (pw !== cpw)            return showError('⚠  Access codes do not match.');
+  if (!clearance)            return showError('⚠  Select a clearance level to proceed.');
+  if (!agree)                return showError('⚠  You must acknowledge the terms to enroll.');
+
+  // Loading state
+  btn.classList.add('loading');
+  btn.disabled = true;
+
+  setTimeout(function() {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+
+    var overlay = document.getElementById('successOverlay');
+    overlay.classList.add('active');
+
+    // Redirect to login after 2.4s
+    setTimeout(function() {
+      window.location.href = 'login.html';
+    }, 2400);
+  }, 1800);
+});
+</script>
+
+<script>
+  document.documentElement.classList.add('sp-visible');
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      document.body.classList.add('sp-ready');
+    });
+  });
+</script>
+</body>
+</html>

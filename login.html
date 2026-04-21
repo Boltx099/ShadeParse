@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShadeParse — Secure Login</title>
+  <script>
+    /* Sync theme before paint */
+    (function() {
+      var t = localStorage.getItem('sp_theme');
+      if (t !== 'dark' && t !== 'light') t = 'light';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/login.css" />
+  <style>
+    html { visibility: hidden; }
+    html.sp-visible { visibility: visible; }
+    body { opacity: 0; transition: opacity .35s ease; }
+    body.sp-ready { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<!-- Animated canvas background -->
+<canvas id="bgCanvas"></canvas>
+
+<!-- Grid overlay -->
+<div class="grid-overlay"></div>
+
+<!-- Scanlines -->
+<div class="scanlines"></div>
+
+<!-- Corner decorations -->
+<div class="corner tl"></div>
+<div class="corner tr"></div>
+<div class="corner bl"></div>
+<div class="corner br"></div>
+
+<!-- Login card -->
+<div class="login-wrap" id="loginWrap">
+
+  <div class="brand-block">
+    <div class="brand-logo">
+      <img src="shadeparse-logo.svg" alt="ShadeParse Logo" width="80" height="80"/>
+    </div>
+    <div class="brand-name" id="typingTarget"></div>
+    <div class="brand-sub">ENTERPRISE SECURITY PLATFORM</div>
+    <div class="brand-ver">v4.0.0 — CLASSIFIED ACCESS</div>
+  </div>
+
+  <form class="login-form" id="loginForm" autocomplete="off">
+
+    <div class="field-wrap">
+      <label class="field-label">OPERATOR ID</label>
+      <div class="field-inner">
+        <svg class="field-icon" viewBox="0 0 20 20"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0H3z" fill="currentColor"/></svg>
+        <input type="text" id="usernameInput" class="field-input" placeholder="Enter operator ID" autocomplete="off" spellcheck="false" />
+        <div class="field-scan"></div>
+      </div>
+    </div>
+
+    <div class="field-wrap">
+      <label class="field-label">ACCESS CODE</label>
+      <div class="field-inner">
+        <svg class="field-icon" viewBox="0 0 20 20"><path d="M10 1a4 4 0 0 1 4 4v1h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1V5a4 4 0 0 1 4-4zm0 9a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm0-7a2 2 0 0 0-2 2v1h4V5a2 2 0 0 0-2-2z" fill="currentColor"/></svg>
+        <input type="password" id="passwordInput" class="field-input" placeholder="Enter access code" autocomplete="off" />
+        <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1">
+          <svg id="eyeIcon" viewBox="0 0 20 20"><path d="M10 3C5 3 1.73 7.11 1 10c.73 2.89 4 7 9 7s8.27-4.11 9-7c-.73-2.89-4-7-9-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" fill="currentColor"/></svg>
+        </button>
+        <div class="field-scan"></div>
+      </div>
+    </div>
+
+    <div class="remember-row">
+      <label class="check-wrap">
+        <input type="checkbox" id="rememberMe" />
+        <span class="check-box"></span>
+        <span class="check-label">PERSIST SESSION</span>
+      </label>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <button type="submit" class="login-btn" id="loginBtn">
+      <span class="btn-text" id="btnText">AUTHENTICATE</span>
+      <div class="btn-loader" id="btnLoader">
+        <span></span><span></span><span></span>
+      </div>
+      <div class="btn-glow"></div>
+    </button>
+
+  </form>
+
+  <div class="login-signup">
+    <span>Don't have an account? <a href="register.html" class="signup-link">Register here</a></span>
+  </div>
+
+  <div class="login-footer">
+    <span>SHADEPARSE SECURITY SYSTEMS</span>
+    <span class="dot-sep"></span>
+    <span>UNAUTHORIZED ACCESS PROHIBITED</span>
+  </div>
+
+</div>
+
+<!-- Success overlay -->
+<div class="success-overlay" id="successOverlay">
+  <div class="success-ring">
+    <svg viewBox="0 0 80 80"><circle cx="40" cy="40" r="36" stroke="#4f8fff" stroke-width="2" fill="none" stroke-dasharray="226" stroke-dashoffset="226" class="ring-circle"/></svg>
+    <div class="success-check">
+      <svg viewBox="0 0 24 24"><polyline points="20,6 9,17 4,12" stroke="#4f8fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="check-line"/></svg>
+    </div>
+  </div>
+  <div class="success-text">ACCESS GRANTED</div>
+  <div class="success-sub">Initializing dashboard...</div>
+</div>
+
+<script src="js/auth.js"></script>
+<script>
+  document.documentElement.classList.add('sp-visible');
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      document.body.classList.add('sp-ready');
+      initLogin();
+    });
+  });
+</script>
+</body>
+</html>

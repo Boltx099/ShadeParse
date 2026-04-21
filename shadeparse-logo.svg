@@ -1,0 +1,58 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <!-- Primary gradient -->
+    <linearGradient id="primaryGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Secondary gradient for accents -->
+    <linearGradient id="accentGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#2ecc89;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#34d399;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Glow filter -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="url(#primaryGradient)" opacity="0.1" stroke="url(#primaryGradient)" stroke-width="2"/>
+  
+  <!-- Shield outline -->
+  <path d="M 100 25 L 155 50 L 155 95 C 155 140 100 170 100 170 C 100 170 45 140 45 95 L 45 50 Z" 
+        stroke="url(#primaryGradient)" stroke-width="3" fill="none" stroke-linejoin="round"/>
+  
+  <!-- Inner security layer -->
+  <path d="M 100 40 L 145 60 L 145 95 C 145 132 100 158 100 158 C 100 158 55 132 55 95 L 55 60 Z" 
+        stroke="url(#primaryGradient)" stroke-width="1.5" fill="none" opacity="0.6"/>
+  
+  <!-- Crosshair/scanning element -->
+  <g transform="translate(100, 100)">
+    <!-- Horizontal scan line -->
+    <line x1="-30" y1="0" x2="30" y2="0" stroke="url(#accentGradient)" stroke-width="2.5" stroke-linecap="round" filter="url(#glow)"/>
+    
+    <!-- Vertical scan line -->
+    <line x1="0" y1="-30" x2="0" y2="30" stroke="url(#primaryGradient)" stroke-width="2.5" stroke-linecap="round" opacity="0.8"/>
+    
+    <!-- Corner brackets (parsing elements) -->
+    <path d="M -25 -25 L -20 -25 L -20 -20" stroke="url(#primaryGradient)" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M 25 -25 L 20 -25 L 20 -20" stroke="url(#primaryGradient)" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M -25 25 L -20 25 L -20 20" stroke="url(#primaryGradient)" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M 25 25 L 20 25 L 20 20" stroke="url(#primaryGradient)" stroke-width="1.5" stroke-linecap="round"/>
+    
+    <!-- Center accent dot -->
+    <circle cx="0" cy="0" r="4" fill="url(#accentGradient)" filter="url(#glow)"/>
+    <circle cx="0" cy="0" r="2" fill="white" opacity="0.9"/>
+  </g>
+  
+  <!-- Outer decorative rings -->
+  <circle cx="100" cy="100" r="75" stroke="url(#primaryGradient)" stroke-width="1" fill="none" opacity="0.3" stroke-dasharray="5,5"/>
+  <circle cx="100" cy="100" r="60" stroke="url(#accentGradient)" stroke-width="0.8" fill="none" opacity="0.25"/>
+</svg>
