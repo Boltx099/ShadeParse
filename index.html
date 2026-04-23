@@ -429,12 +429,19 @@
         <select class="filter-sel" id="findingsTypeFilter" onchange="filterFindings()">
           <option value="all">All Types</option>
           <option value="SECRET">Secrets</option>
-          <option value="XSS">XSS</option>
+          <option value="CRED">Credentials</option>
+          <option value="XSS">XSS / SSTI</option>
+          <option value="INJECT">Injection</option>
           <option value="ENDPOINT">Endpoints</option>
-          <option value="CRYPTO">Crypto</option>
+          <option value="CRYPTO">Weak Crypto</option>
           <option value="PROTO">Prototype Pollution</option>
           <option value="SUPPLY">Supply Chain</option>
           <option value="LOGIC">Logic Flaws</option>
+          <option value="CONFIG">Config</option>
+          <option value="STORAGE">Insecure Storage</option>
+          <option value="DESERIAL">Deserialization</option>
+          <option value="PATH">Path Traversal</option>
+          <option value="SSRF">SSRF</option>
           <option value="NETWORK">Network</option>
         </select>
         <input type="text" class="filter-search" id="findingsSearch" placeholder="Search findings..." oninput="filterFindings()" />

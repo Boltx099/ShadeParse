@@ -222,6 +222,10 @@ function runAudit(state, cfg) {
       if (cfg.modules.inject !== false) findings = findings.concat(detectInjection(code));
       if (cfg.modules.storage !== false) findings = findings.concat(detectInsecureStorage(code));
       if (cfg.modules.duplicates !== false) findings = findings.concat(detectDuplicates(code));
+      /* Python-specific detectors — run on all code (language-gated internally) */
+      findings = findings.concat(detectDeserialization(code));
+      findings = findings.concat(detectPathTraversal(code));
+      findings = findings.concat(detectSSRF(code));
 
       /* Sort and store */
       /* Deduplicate — same rule on same line counts once */

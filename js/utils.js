@@ -61,7 +61,8 @@ function tc(t) {
   return {
     SECRET:'#ff2d55', ENDPOINT:'#3d9eff', XSS:'#ff6030',  PROTO:'#9b5fff',
     CRYPTO:'#00d4b8', SUPPLY:'#ffc840',   LOGIC:'#ff3a9d', CONFIG:'#6878a8',
-    CRED:'#ff5c00',   INJECT:'#e040fb',   STORAGE:'#00bcd4'
+    CRED:'#ff5c00',   INJECT:'#e040fb',   STORAGE:'#00bcd4',
+    DESERIAL:'#ff1744', PATH:'#ff6e40',   SSRF:'#d500f9'
   }[t] || '#6878a8';
 }
 
@@ -70,7 +71,8 @@ function tbg(t) {
     SECRET:'rgba(255,45,85,.12)',    ENDPOINT:'rgba(61,158,255,.12)',  XSS:'rgba(255,96,48,.12)',
     PROTO:'rgba(155,95,255,.12)',    CRYPTO:'rgba(0,212,184,.12)',      SUPPLY:'rgba(255,200,64,.12)',
     LOGIC:'rgba(255,58,157,.12)',    CONFIG:'rgba(104,120,168,.1)',
-    CRED:'rgba(255,92,0,.12)',       INJECT:'rgba(224,64,251,.12)',     STORAGE:'rgba(0,188,212,.12)'
+    CRED:'rgba(255,92,0,.12)',       INJECT:'rgba(224,64,251,.12)',     STORAGE:'rgba(0,188,212,.12)',
+    DESERIAL:'rgba(255,23,68,.12)', PATH:'rgba(255,110,64,.12)',       SSRF:'rgba(213,0,249,.12)'
   }[t] || 'rgba(120,120,120,.1)';
 }
 
