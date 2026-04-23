@@ -87,9 +87,18 @@ var MALICIOUS_PKGS = ['flatmap-stream','event-stream','ua-parser-js','colors','c
 
 // PYTHON
 var PY_SQL = [
-  {re:/(?:cursor|conn|db|session|c)\s*\.\s*execute\s*\(\s*f["'][^"']*\{/gi, title:'SQL Injection — f-string in execute()', sev:'critical', desc:'f-string SQL interpolation is injectable.', fix:'cursor.execute("SELECT * FROM t WHERE id = ?", (id,))'},
-  {re:/(?:cursor|conn|db|c)\s*\.\s*execute\s*\([^)]*\.format\s*\(/gi, title:'SQL Injection — .format() in execute()', sev:'critical', desc:'.format() in SQL is injectable.', fix:'Use parameterized queries.'},
-  {re:/(?:cursor|conn|db|c)\s*\.\s*execute\s*\(\s*["'][^"']*["']\s*%\s*/gi, title:'SQL Injection — % formatting in execute()', sev:'critical', desc:'% formatting in SQL is injectable.', fix:'cursor.execute("SELECT * FROM t WHERE id = ?", (val,))'},
+  // Direct f-string inside execute()
+  {re:/(?:cursor|conn|db|session|c|cur)\s*\.\s*execute\s*\(\s*f["'][^"']*\{/gi, title:'SQL Injection — f-string in execute()', sev:'critical', desc:'f-string SQL interpolation is injectable.', fix:'cursor.execute("SELECT * FROM t WHERE id = ?", (id,))'},
+  // f-string SQL assigned to a variable first, then passed to execute()
+  {re:/(?:query|sql|stmt|statement)\s*=\s*f["'][^"'\n]*(?:SELECT|INSERT|UPDATE|DELETE|WHERE|FROM)[^"'\n]*\{/gi, title:'SQL Injection — f-string SQL query variable', sev:'critical', desc:'SQL query built with f-string interpolation → injectable when passed to execute().', fix:'cursor.execute("SELECT * FROM users WHERE username=?", (username,))'},
+  // execute(query) — variable passed directly (two-step pattern)
+  {re:/(?:cursor|conn|db|session|c|cur)\s*\.\s*execute\s*\(\s*(?:query|sql|stmt|statement)\s*\)/gi, title:'SQL Injection — variable passed directly to execute()', sev:'high', desc:'A pre-built variable is passed to execute(). If assembled via f-string or concatenation, this is injectable.', fix:'Always use parameterized queries: cursor.execute("SELECT ... WHERE id=?", (val,))'},
+  // .format() in execute
+  {re:/(?:cursor|conn|db|c|cur)\s*\.\s*execute\s*\([^)]*\.format\s*\(/gi, title:'SQL Injection — .format() in execute()', sev:'critical', desc:'.format() in SQL is injectable.', fix:'Use parameterized queries.'},
+  // % formatting in execute
+  {re:/(?:cursor|conn|db|c|cur)\s*\.\s*execute\s*\(\s*["'][^"']*["']\s*%\s*/gi, title:'SQL Injection — % formatting in execute()', sev:'critical', desc:'% formatting in SQL is injectable.', fix:'cursor.execute("SELECT * FROM t WHERE id = ?", (val,))'},
+  // string concat in execute
+  {re:/(?:cursor|conn|db|session|c|cur)\s*\.\s*execute\s*\(\s*["'][^"']*["']\s*\+/gi, title:'SQL Injection — string concatenation in execute()', sev:'critical', desc:'String concatenation in SQL query → injectable.', fix:'Use parameterized queries with ? placeholders.'},
 ];
 var PY_CMD = [
   {re:/os\.system\s*\(\s*(?:f["']|[^"')]*\+)/gi, title:'Command Injection — os.system() dynamic', sev:'critical', desc:'os.system() with user input → OS command execution.', fix:'subprocess.run(["cmd", arg], shell=False)'},
@@ -111,9 +120,18 @@ var PY_DESERIAL = [
 var PY_PATH = [
   {re:/open\s*\(\s*(?:request\.\w+\.get\s*\(|f["'][^"']*\{[^}]*(?:request|filename|path))/gi, title:'Path Traversal — open() with request input', sev:'critical', desc:'open() with unvalidated params → read arbitrary files.', fix:'path = os.path.join(base, os.path.basename(input))\nif not path.startswith(base): abort(403)'},
   {re:/send_file\s*\(\s*(?:request\.|os\.path\.join\s*\([^)]*request)/gi, title:'Path Traversal — send_file() with request input', sev:'critical', desc:'Flask send_file() with user path → file disclosure.', fix:'Use werkzeug.utils.safe_join()'},
+  // f.save() with unvalidated filename — suppress if secure_filename() is used nearby
+  {re:/\.save\s*\(\s*(?:os\.path\.join\s*\([^)]*(?:f\.filename|file\.filename|filename)|filename|path)\s*\)/gi, title:'Path Traversal — file.save() with unvalidated filename', sev:'critical', desc:'Saving an uploaded file using the raw f.filename allows path traversal (e.g. ../../etc/passwd).', fix:'from werkzeug.utils import secure_filename\nfilename = secure_filename(f.filename)\npath = os.path.join("uploads", filename)\nf.save(path)'},
+  // os.path.join with raw filename — suppress if secure_filename used nearby
+  {re:/os\.path\.join\s*\([^)]*(?:f\.filename|file\.filename|request\.files[^)]*\.filename)\s*\)/gi, title:'Path Traversal — os.path.join() with raw uploaded filename', sev:'critical', desc:'os.path.join() with an unvalidated filename from the request allows directory traversal.', fix:'from werkzeug.utils import secure_filename\nfilename = secure_filename(request.files["file"].filename)'},
 ];
 var PY_SSRF = [
+  // User-controlled URL passed to requests
   {re:/requests\s*\.\s*(?:get|post|put|delete|patch)\s*\(\s*(?:request\.\w+\.get|request\.args\.get|f["'][^"']*\{[^}]*request)/gi, title:'SSRF — requests library user-controlled URL', sev:'critical', desc:'HTTP to user URL → SSRF, internal network access.', fix:'ALLOWED = ["api.example.com"]\nif urlparse(url).hostname not in ALLOWED: abort(400)'},
+  // Hardcoded internal/localhost URL
+  {re:/requests\s*\.\s*(?:get|post|put|delete|patch)\s*\(\s*["']https?:\/\/(?:localhost|127\.0\.0\.1|internal\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/gi, title:'SSRF — requests to hardcoded internal/localhost URL', sev:'high', desc:'HTTP request targeting an internal network address. This can expose internal services to exploitation if the URL is ever influenced by external input.', fix:'Avoid internal URLs in application code. Use service mesh or environment-injected config.'},
+  // requests without timeout — DoS risk
+  {re:/requests\s*\.\s*(?:get|post|put|delete|patch)\s*\([^)]*\)(?!\s*#[^\n]*timeout)(?![^)]*timeout\s*=)/gi, title:'Missing timeout on requests call — DoS risk', sev:'medium', desc:'requests without a timeout will hang indefinitely if the remote server is slow or unresponsive, causing thread exhaustion.', fix:'requests.get(url, timeout=5)'},
   {re:/urllib\s*\.\s*request\s*\.\s*urlopen\s*\(\s*(?:request\.\w+|f["'][^"']*\{[^}]*request)/gi, title:'SSRF — urllib.urlopen() user-controlled URL', sev:'critical', desc:'urlopen() with unvalidated URL → SSRF.', fix:'Validate and allowlist target URLs.'},
 ];
 var PY_CONFIG = [
@@ -123,11 +141,21 @@ var PY_CONFIG = [
   {re:/verify\s*=\s*False\b/gi, title:'SSL certificate verification disabled', sev:'critical', desc:'verify=False disables TLS validation → MITM.', fix:'Always use verify=True.'},
   {re:/ALLOWED_HOSTS\s*=\s*\[\s*['"]\*['"]\s*\]/gi, title:'Django ALLOWED_HOSTS wildcard (*)', sev:'high', desc:'ALLOWED_HOSTS = ["*"] allows host header attacks.', fix:'ALLOWED_HOSTS = ["yourdomain.com"]'},
   {re:/DEBUG\s*=\s*True\b/gi, title:'Django DEBUG=True in production', sev:'critical', desc:'Django DEBUG=True exposes stack traces and settings.', fix:'DEBUG = bool(os.environ.get("DJANGO_DEBUG", False))'},
+  // os.environ leaked via Flask response
+  {re:/(?:jsonify|json\.dumps|return)\s*\(\s*dict\s*\(\s*os\.environ\s*\)|os\.environ\s*\)/gi, title:'Environment variables exposed in HTTP response', sev:'critical', desc:'All environment variables (including secrets, API keys, DB passwords) are returned to the caller. This is a full secret dump.', fix:'# Remove this endpoint entirely, or return only safe non-secret values\nreturn jsonify({"version": os.getenv("APP_VERSION", "unknown")})'},
+  // Exception message returned directly to user
+  {re:/(?:jsonify|json\.dumps)\s*\(\s*\{[^}]*(?:str\s*\(\s*e\s*\)|str\s*\(\s*err\s*\)|str\s*\(\s*error\s*\)|traceback)[^}]*\}\s*\)/gi, title:'Stack trace / exception detail exposed to user', sev:'high', desc:'Returning raw exception messages leaks internal implementation details, file paths, and variable names to attackers.', fix:'return jsonify({"error": "An internal error occurred"}), 500'},
 ];
 var PY_CRYPTO = [
-  {re:/hashlib\.md5\s*\(/gi, title:'Weak hashing — MD5', sev:'high', desc:'MD5 is broken for security.', fix:'hashlib.sha256(data).hexdigest()'},
+  {re:/hashlib\.md5\s*\(/gi, title:'Weak hashing — MD5', sev:'high', desc:'MD5 is broken for security use.', fix:'hashlib.sha256(data).hexdigest()'},
   {re:/hashlib\.sha1\s*\(/gi, title:'Weak hashing — SHA-1', sev:'high', desc:'SHA-1 is deprecated.', fix:'hashlib.sha256(data).hexdigest()'},
   {re:/\brandom\.(?:random|randint|choice|shuffle|randrange)\s*\(/gi, title:'Insecure randomness — random module', sev:'high', desc:'random is not cryptographically secure.', fix:'import secrets\nsecrets.token_hex(32)'},
+  // base64 used as encryption / token generation
+  {re:/base64\.b64encode\s*\(\s*(?:[^)]*\+[^)]*\)|.*(?:password|secret|key|token|user)[^)]*\))/gi, title:'Weak crypto — base64 used as encryption', sev:'critical', desc:'base64 is encoding, not encryption — trivially reversible by anyone. Never use it to "encrypt" sensitive data or tokens.', fix:'from cryptography.fernet import Fernet\nkey = Fernet.generate_key()\nf = Fernet(key)\ntoken = f.encrypt(data.encode())'},
+  // Hardcoded crypto secret concatenated into data
+  {re:/base64\.b64encode\s*\([^)]*(?:CRYPTO_SECRET|SECRET|secret_key|secret)\s*\)/gi, title:'Weak crypto — hardcoded secret concatenated into base64 token', sev:'critical', desc:'Concatenating a hardcoded secret into base64 is not encryption. The secret is in source code and base64 is trivially reversible.', fix:'Use HMAC or Fernet symmetric encryption with a key stored in environment variables.'},
+  // hashlib used for password hashing (not a password-hashing function)
+  {re:/hashlib\.(?:md5|sha1|sha256|sha512)\s*\([^)]*(?:password|passwd|pwd)[^)]*\)/gi, title:'Insecure password hashing — hashlib (not a KDF)', sev:'critical', desc:'hashlib hash functions are too fast for password hashing — easily brute-forced. Use a proper key derivation function.', fix:'import bcrypt\nhashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())\n# or: from werkzeug.security import generate_password_hash'},
 ];
 var PY_XSS = [
   {re:/return\s+(?:f["'][^"']*<[^>]+>[^"']*\{[^}]*(?:request\.\w+\.get|q\b|name\b|msg\b|user_input))/gi, title:'XSS — Unescaped user input in HTML f-string', sev:'high', desc:'User input in HTML without escaping → reflected XSS.', fix:'from html import escape\nreturn f"<div>{escape(user_input)}</div>"'},
@@ -493,7 +521,16 @@ function detectInjection(code) {
       while((m=re.exec(code))!==null){var ln=lineOf(code,m.index);F.push({id:'inject-js-'+ln,type:'INJECT',title:p.title,sev:p.sev,loc:'line '+ln,line:ln,snippet:lines[ln-1]?lines[ln-1].trim():m[0],match:m[0].slice(0,80),desc:p.desc,remediation:{text:'Use parameterized queries or safe APIs.',fix:p.fix},confidence:88,taint:{source:'user-controlled input',flow:['unsanitized'],sink:p.title}});}
     });
   }
-  if(lang==='python'||lang==='generic'){ F=F.concat(runPats(code,PY_SQL,'INJECT','inject-py-sql',null)); F=F.concat(runPats(code,PY_CMD,'INJECT','inject-py-cmd',null)); }
+  if(lang==='python'||lang==='generic'){
+    // Extra pass: catch cur.execute(f"...{var}...") directly — the base PY_SQL pattern covers the variable case
+    var pyDirectFRe = /(?:cursor|conn|db|session|c|cur)\s*\.\s*execute\s*\(\s*f["'][^"'\n]*\{[^}]*\}/gi;
+    var m2;
+    while((m2=pyDirectFRe.exec(code))!==null){
+      var ln2=lineOf(code,m2.index);
+      F.push({id:'inject-py-sql-direct-'+ln2,type:'INJECT',title:'SQL Injection — f-string directly in execute()',sev:'critical',loc:'line '+ln2,line:ln2,snippet:lines[ln2-1]?lines[ln2-1].trim():m2[0],match:m2[0].slice(0,100),desc:'f-string interpolation inside execute() call — user-controlled variables interpolated into SQL are injectable.',remediation:{text:'Use parameterized queries.',fix:'cur.execute("SELECT * FROM users WHERE username=?", (username,))'},confidence:95,taint:{source:'function argument / request data',flow:['f-string interpolation'],sink:'execute()'}});
+    }
+    F=F.concat(runPats(code,PY_SQL,'INJECT','inject-py-sql',null)); F=F.concat(runPats(code,PY_CMD,'INJECT','inject-py-cmd',null));
+  }
   if(lang==='php'||lang==='generic'){    F=F.concat(runPats(code,PHP_SQL,'INJECT','inject-php-sql',null)); F=F.concat(runPats(code,PHP_CMD,'INJECT','inject-php-cmd',null)); }
   if(lang==='java'||lang==='generic'){   F=F.concat(runPats(code,JAVA_SQL,'INJECT','inject-java-sql',null)); F=F.concat(runPats(code,JAVA_CMD,'INJECT','inject-java-cmd',null)); }
   if(lang==='go'||lang==='generic'){     F=F.concat(runPats(code,GO_SQL,'INJECT','inject-go-sql',null)); F=F.concat(runPats(code,GO_CMD,'INJECT','inject-go-cmd',null)); }
@@ -521,16 +558,32 @@ function detectDeserialization(code) {
 }
 
 function detectPathTraversal(code) {
-  var F=[], lang=detectLanguage(code);
-  if(lang==='python'||lang==='generic') F=F.concat(runPats(code,PY_PATH,'PATH','path-py',null));
-  if(lang==='php'   ||lang==='generic') F=F.concat(runPats(code,PHP_FILE,'PATH','path-php',null));
+  var F=[], lang=detectLanguage(code), lines=code.split('\n');
+  if(lang==='python'||lang==='generic'){
+    runPats(code,PY_PATH,'PATH','path-py',null).forEach(function(f){
+      // Suppress path traversal finding if secure_filename() is used within 5 lines above the match
+      var lineIdx = f.line - 1;
+      var windowStart = Math.max(0, lineIdx - 5);
+      var nearbyLines = lines.slice(windowStart, lineIdx + 1).join('\n');
+      if(/secure_filename\s*\(/.test(nearbyLines)) return; // already sanitized
+      F.push(f);
+    });
+  }
+  if(lang==='php'||lang==='generic') F=F.concat(runPats(code,PHP_FILE,'PATH','path-php',null));
   return F;
 }
 
 function detectSSRF(code) {
-  var F=[], lang=detectLanguage(code);
-  if(lang==='python'||lang==='generic') F=F.concat(runPats(code,PY_SSRF,'SSRF','ssrf-py',null));
-  if(lang==='go'    ||lang==='generic') F=F.concat(runPats(code,GO_SSRF,'SSRF','ssrf-go',null));
+  var F=[], lang=detectLanguage(code), lines=code.split('\n');
+  if(lang==='python'||lang==='generic'){
+    runPats(code,PY_SSRF,'SSRF','ssrf-py',null).forEach(function(f){
+      // Suppress "missing timeout" if the matched line itself contains timeout=
+      var lineText = lines[f.line-1] || '';
+      if(f.title.indexOf('timeout') !== -1 && /timeout\s*=/.test(lineText)) return;
+      F.push(f);
+    });
+  }
+  if(lang==='go'&&lang==='generic') F=F.concat(runPats(code,GO_SSRF,'SSRF','ssrf-go',null));
   return F;
 }
 
