@@ -1,4 +1,4 @@
-# ShadeParse
+# ShadeParse_
 
 Advanced static source code auditing dashboard built for security researchers, bug hunters, and developers. ShadeParse helps identify exposed secrets, insecure logic, weak cryptography, dangerous sinks, suspicious endpoints, and other high-risk patterns directly from source code.
 
