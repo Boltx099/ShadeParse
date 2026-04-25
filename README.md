@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 # ShadeParse_
+=======
+# ShadeParse
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
 
 Advanced static source code auditing dashboard built for security researchers, bug hunters, and developers. ShadeParse helps identify exposed secrets, insecure logic, weak cryptography, dangerous sinks, suspicious endpoints, and other high-risk patterns directly from source code.
 

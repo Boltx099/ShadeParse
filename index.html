@@ -254,6 +254,39 @@
             <div class="input-toolbar">
               <span class="input-label">SOURCE CODE</span>
               <div class="input-actions">
+<<<<<<< HEAD
+=======
+                <div class="lang-tabs-wrap">
+                  <span class="lang-tabs-label">LANG:</span>
+                  <div class="lang-select-wrap">
+                    <select id="langSelect" class="lang-select" onchange="setLangFromSelect(this)">
+                      <option value="auto"       selected>⚡ Auto-Detect</option>
+                      <optgroup label="Web">
+                        <option value="js">JavaScript</option>
+                        <option value="typescript">TypeScript</option>
+                        <option value="php">PHP</option>
+                        <option value="sql">SQL</option>
+                        <option value="solidity">Solidity</option>
+                      </optgroup>
+                      <optgroup label="Backend">
+                        <option value="python">Python</option>
+                        <option value="java">Java</option>
+                        <option value="go">Go</option>
+                        <option value="ruby">Ruby</option>
+                        <option value="csharp">C#</option>
+                        <option value="kotlin">Kotlin</option>
+                        <option value="swift">Swift</option>
+                      </optgroup>
+                      <optgroup label="Systems">
+                        <option value="cpp">C / C++</option>
+                        <option value="rust">Rust</option>
+                        <option value="shell">Shell / Bash</option>
+                      </optgroup>
+                    </select>
+                    <span class="lang-select-arrow">▾</span>
+                  </div>
+                </div>
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
                 <button class="tb-btn" onclick="loadSample('xss')">XSS Sample</button>
                 <button class="tb-btn" onclick="loadSample('secrets')">Secrets Sample</button>
                 <button class="tb-btn" onclick="loadSample('supply')">Supply Chain Sample</button>
@@ -318,7 +351,11 @@
               </div>
               <div class="target-field">
                 <input type="text" id="ipTargetInput" class="target-input" placeholder="x.x.x.x" spellcheck="false" />
+<<<<<<< HEAD
                 <button class="target-scan-btn" onclick="runIpScan()">
+=======
+                <button class="target-scan-btn" id="ipScanBtn" onclick="runIpScan()">
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
                   <svg viewBox="0 0 20 20"><path d="M6 4l10 6-10 6V4z" fill="currentColor"/></svg>
                   SCAN IP
                 </button>
@@ -572,9 +609,29 @@
 <script src="js/state.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/detectors.js"></script>
+<<<<<<< HEAD
 <script src="js/samples.js"></script>
 <script src="js/scanner.js"></script>
 <script src="js/network.js"></script>
+=======
+<script src="js/audits/js_audit.js"></script>
+<script src="js/audits/python_audit.js"></script>
+<script src="js/audits/php_audit.js"></script>
+<script src="js/audits/java_audit.js"></script>
+<script src="js/audits/go_audit.js"></script>
+<script src="js/audits/ruby_audit.js"></script>
+<script src="js/audits/cpp_audit.js"></script>
+<script src="js/audits/csharp_audit.js"></script>
+<script src="js/audits/rust_audit.js"></script>
+<script src="js/audits/shell_audit.js"></script>
+<script src="js/audits/kotlin_audit.js"></script>
+<script src="js/audits/swift_audit.js"></script>
+<script src="js/audits/sql_audit.js"></script>
+<script src="js/samples.js"></script>
+<script src="js/scanner.js"></script>
+<script src="js/network.js"></script>
+<script src="js/lang-audit.js"></script>
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
 <script src="js/ui.js"></script>
 <script src="js/export.js"></script>
 <script src="js/app.js"></script>

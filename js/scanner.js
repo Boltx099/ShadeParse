@@ -20,6 +20,10 @@ var PIPE = [
   { id: 'crypto',    name: 'Weak Crypto',     sub: 'Insecure patterns' },
   { id: 'supply',    name: 'Supply Chain',    sub: 'Dep. risks'        },
   { id: 'logic',     name: 'Logic Inspector', sub: 'Auth & roles'      },
+<<<<<<< HEAD
+=======
+  { id: 'obfusc',    name: 'Deobfuscator',    sub: 'Encoding & ciphers'},
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
   { id: 'score',     name: 'Risk Scorer',     sub: 'Dedup & rank'      },
   { id: 'ai',        name: 'AI Remediation',  sub: 'Fix hints'         },
 ];
@@ -35,6 +39,36 @@ var NET_PIPE = [
   { id: 'files',      name: 'Sensitive Files', sub: 'robots / sitemap' },
 ];
 
+<<<<<<< HEAD
+=======
+/* ─── LANGUAGE LABELS + ACCENT COLORS for history badges ─── */
+var LANG_INFO = {
+  js:         { label: 'JavaScript', short: 'JS',  color: '#f7df1e', text: '#000' },
+  typescript: { label: 'TypeScript', short: 'TS',  color: '#3178c6', text: '#fff' },
+  python:     { label: 'Python',     short: 'PY',  color: '#3776ab', text: '#fff' },
+  php:        { label: 'PHP',        short: 'PHP', color: '#777bb4', text: '#fff' },
+  java:       { label: 'Java',       short: 'JAVA',color: '#b07219', text: '#fff' },
+  go:         { label: 'Go',         short: 'GO',  color: '#00add8', text: '#000' },
+  ruby:       { label: 'Ruby',       short: 'RB',  color: '#cc342d', text: '#fff' },
+  csharp:     { label: 'C#',         short: 'C#',  color: '#239120', text: '#fff' },
+  cpp:        { label: 'C / C++',    short: 'C++', color: '#f34b7d', text: '#fff' },
+  rust:       { label: 'Rust',       short: 'RS',  color: '#dea584', text: '#000' },
+  shell:      { label: 'Shell',      short: 'SH',  color: '#4eaa25', text: '#fff' },
+  sql:        { label: 'SQL',        short: 'SQL', color: '#e38c00', text: '#000' },
+  kotlin:     { label: 'Kotlin',     short: 'KT',  color: '#a97bff', text: '#fff' },
+  swift:      { label: 'Swift',      short: 'SW',  color: '#f05138', text: '#fff' },
+  generic:    { label: 'Code',       short: 'GEN', color: '#888',    text: '#fff' }
+};
+
+function langBadge(lang) {
+  var info = LANG_INFO[lang] || LANG_INFO.generic;
+  return '<span style="display:inline-block;padding:1px 6px;background:'+info.color+
+         ';color:'+info.text+';border-radius:3px;font-size:9px;font-weight:700;'+
+         'font-family:var(--mono);letter-spacing:.06em;margin-right:8px;'+
+         'vertical-align:middle">'+info.short+'</span>';
+}
+
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
 /* ─── PIPELINE RENDERER ─── */
 
 function renderPipe(activeId, done, pipeType) {
@@ -202,7 +236,11 @@ function runAudit(state, cfg) {
   renderPipe('parse', [], 'src');
   setProgress(0, 'Starting scan...');
 
+<<<<<<< HEAD
   var steps    = ['parse','vendor','secrets','endpoints','xss','proto','crypto','supply','logic','score','ai'];
+=======
+  var steps    = ['parse','vendor','secrets','endpoints','xss','proto','crypto','supply','logic','obfusc','score','ai'];
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
   var completed = [];
   var stepIdx   = 0;
 
@@ -226,6 +264,11 @@ function runAudit(state, cfg) {
       findings = findings.concat(detectDeserialization(code));
       findings = findings.concat(detectPathTraversal(code));
       findings = findings.concat(detectSSRF(code));
+<<<<<<< HEAD
+=======
+      /* Obfuscation & encoding detection — all languages */
+      if (typeof detectObfuscation === 'function') findings = findings.concat(detectObfuscation(code));
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
 
       /* Sort and store */
       /* Deduplicate — same rule on same line counts once */
@@ -250,6 +293,22 @@ function runAudit(state, cfg) {
       buildSevPills(state, cfg);
       updateDiffBanner();
 
+<<<<<<< HEAD
+=======
+      /* Render diff-style code view with flagged lines */
+      if (typeof buildDiffCodeView === 'function') {
+        var _diffHtml = buildDiffCodeView(code, findings);
+        var _diffWrap = document.getElementById('diffCodeWrap');
+        if (!_diffWrap) {
+          _diffWrap = document.createElement('div');
+          _diffWrap.id = 'diffCodeWrap';
+          var _findArea = document.getElementById('findingsArea');
+          if (_findArea && _findArea.parentNode) _findArea.parentNode.insertBefore(_diffWrap, _findArea.nextSibling);
+        }
+        if (_diffWrap) _diffWrap.innerHTML = _diffHtml || '';
+      }
+
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
       /* Update findings sidebar badge */
       var badge = document.getElementById('sbFindBadge');
       if (badge) {
@@ -261,6 +320,7 @@ function runAudit(state, cfg) {
 
       /* ── FIXED: record history entry for source scans ── */
       var score = computeRiskScore(findings);
+<<<<<<< HEAD
       addHistoryEntry({
         target:   'Source Code',
         type:     'SOURCE',
@@ -270,6 +330,53 @@ function runAudit(state, cfg) {
         risk:     score,
         date:     new Date().toLocaleDateString(),
         time:     new Date().toLocaleTimeString(),
+=======
+      var _diffWrapEl = document.getElementById('diffCodeWrap');
+
+      /* Capture metadata about the audited code so the history row reminds
+         the user what they actually scanned (language + size + first line). */
+      var _lang = (typeof detectLanguage === 'function') ? detectLanguage(code)
+                 : (window._selectedLang || 'generic');
+      var _info = LANG_INFO[_lang] || LANG_INFO.generic;
+      var _lineCount = code ? (code.match(/\r?\n/g) || []).length + 1 : 0;
+      var _charCount = code ? code.length : 0;
+      var _firstLine = '';
+      if (code) {
+        var _lines = code.split(/\r?\n/);
+        for (var _i = 0; _i < _lines.length && _i < 50; _i++) {
+          var _ln = _lines[_i].trim();
+          if (_ln && !/^(\/\/|#|--|\*|<!--)/.test(_ln)) { _firstLine = _ln; break; }
+        }
+        if (!_firstLine) _firstLine = (_lines[0] || '').trim();
+      }
+      _firstLine = _firstLine.slice(0, 120);
+
+      var _targetLabel = langBadge(_lang) + _info.label +
+        ' <span style="color:var(--text2);font-weight:400">· '+_lineCount+' line'+(_lineCount===1?'':'s')+'</span>';
+
+      addHistoryEntry({
+        target:    _targetLabel,
+        type:      'SOURCE',
+        lang:      _lang,
+        langLabel: _info.label,
+        lineCount: _lineCount,
+        charCount: _charCount,
+        preview:   _firstLine,
+        findings:  findings.length,
+        critical:  findings.filter(function(f){ return f.sev === 'critical'; }).length,
+        high:      findings.filter(function(f){ return f.sev === 'high'; }).length,
+        risk:      score,
+        date:      new Date().toLocaleDateString(),
+        time:      new Date().toLocaleTimeString(),
+      }, {
+        findings:    findings.slice(),
+        networkHtml: '',
+        diffHtml:    _diffWrapEl ? _diffWrapEl.innerHTML : '',
+        codeText:    code,
+        lang:        _lang,
+        preview:     _firstLine,
+        when:        Date.now(),
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
       });
 
       renderHistoryTable();
@@ -277,6 +384,12 @@ function runAudit(state, cfg) {
 
       if (cfg.sound) playBeep();
       if (cfg.toasts) showToast(findings.length + ' findings detected. Risk score: ' + score + '/100.', findings.length ? 'warn' : 'success');
+<<<<<<< HEAD
+=======
+
+      /* Save this mode's results so they survive a tab switch */
+      if (typeof saveModeSnapshot === 'function') saveModeSnapshot('source');
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
       return;
     }
 

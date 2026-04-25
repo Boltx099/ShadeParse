@@ -56,7 +56,65 @@ function toggleSidebar() {
 
 /* ─── SCAN MODE SWITCHING ─── */
 
+<<<<<<< HEAD
 function setScanMode(mode) {
+=======
+/* Per-mode snapshot/restore so each tab (source / domain / ip) keeps its
+   own results. Without this, a code-audit finding bleeds into the IP-scan
+   tab and an IP-scan card stays visible after switching back to source. */
+function saveModeSnapshot(mode) {
+  if (!mode || !APP.state.modeResults) return;
+  var netEl  = document.getElementById('networkResults');
+  var diffEl = document.getElementById('diffCodeWrap');
+  var codeEl = document.getElementById('codeInput');
+  APP.state.modeResults[mode] = {
+    findings:    (APP.state.allFindings || []).slice(),
+    networkHtml: netEl  ? netEl.innerHTML  : '',
+    diffHtml:    diffEl ? diffEl.innerHTML : '',
+    codeText:    (mode === 'source' && codeEl) ? codeEl.value : '',
+    when:        Date.now(),
+  };
+}
+
+function loadModeSnapshot(mode) {
+  var snap = APP.state.modeResults && APP.state.modeResults[mode];
+  var findings = (snap && snap.findings) ? snap.findings.slice() : [];
+  APP.state.allFindings = findings;
+
+  var netEl  = document.getElementById('networkResults');
+  if (netEl) netEl.innerHTML = (snap && snap.networkHtml) || '';
+
+  var diffEl = document.getElementById('diffCodeWrap');
+  if (diffEl) diffEl.innerHTML = (snap && snap.diffHtml) || '';
+
+  /* Restore the code textarea for source mode so the user can see what
+     was audited (or get back to an empty textarea on a fresh tab). */
+  if (mode === 'source') {
+    var codeEl = document.getElementById('codeInput');
+    if (codeEl) codeEl.value = (snap && snap.codeText) || '';
+  }
+
+  /* Re-render the dependents from the restored findings array */
+  if (typeof updateMetrics  === 'function') updateMetrics(findings);
+  if (typeof showRiskScore  === 'function') showRiskScore(findings);
+  if (typeof renderFindings === 'function') renderFindings(APP.state, APP.cfg);
+  if (typeof buildSevPills  === 'function') buildSevPills(APP.state, APP.cfg);
+  if (typeof buildSarif     === 'function') buildSarif();
+
+  var badge = document.getElementById('sbFindBadge');
+  if (badge) {
+    badge.textContent = findings.length;
+    badge.style.display = findings.length ? 'inline-flex' : 'none';
+  }
+}
+
+function setScanMode(mode) {
+  /* Snapshot the OUTGOING mode before swapping panels */
+  if (APP.state.currentMode && APP.state.currentMode !== mode) {
+    saveModeSnapshot(APP.state.currentMode);
+  }
+
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
   APP.state.currentMode = mode;
 
   var panels = { source: 'sourcePanel', domain: 'domainPanel', ip: 'ipPanel' };
@@ -71,6 +129,12 @@ function setScanMode(mode) {
 
   /* Switch pipeline to net or source */
   renderPipe(null, [], mode === 'source' ? 'src' : 'net');
+<<<<<<< HEAD
+=======
+
+  /* Restore the INCOMING mode's previously saved results (or clear if none) */
+  loadModeSnapshot(mode);
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
 }
 
 function runCurrentScan() {
@@ -314,6 +378,10 @@ function renderRecentTargets(state) {
 
 function renderHistoryTable() {
   var history = APP.state.scanHistory || [];
+<<<<<<< HEAD
+=======
+  var details = APP.state.scanHistoryDetail || {};
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
 
   ['dashHistoryBody', 'historyBody'].forEach(function(id) {
     var tbody = document.getElementById(id);
@@ -327,11 +395,50 @@ function renderHistoryTable() {
 
     var rows = history.slice(-20).reverse().map(function(h) {
       var rc = h.risk >= 70 ? 'var(--red)' : h.risk >= 40 ? 'var(--amber)' : 'var(--green)';
+<<<<<<< HEAD
       if (id === 'historyBody') {
         return '<tr>' +
           '<td>' + escHtml(h.target)   + '</td>' +
           '<td>' + escHtml(h.type)     + '</td>' +
           '<td>' + h.findings          + '</td>' +
+=======
+      var hasDetail = !!(h.id && details[h.id]);
+
+      /* SOURCE rows store target as pre-built HTML (with the language
+         badge); other types are plain text and need escaping. */
+      var targetCell = (h.type === 'SOURCE')
+        ? (h.target || '')
+        : escHtml(h.target || '');
+
+      /* Tooltip — show a code preview for source scans so the user can
+         remember what they audited at a glance. */
+      var baseTitle = h.type === 'SOURCE' && h.preview
+        ? (h.langLabel || 'Code') + ' · ' + (h.lineCount || 0) + ' lines\n\n' + h.preview
+        : '';
+      var detailTitle = hasDetail
+        ? 'Click to restore this scan&#39;s results'
+        : 'Detail not in memory (session ended). Re-run scan to view results.';
+      var titleAttr = baseTitle
+        ? (escHtml(baseTitle) + '\n\n— ' + detailTitle)
+        : detailTitle;
+
+      var rowOpen;
+      if (h.id) {
+        var op = hasDetail ? '1' : '.55';
+        rowOpen = '<tr data-hist-id="' + escHtml(h.id) + '" '+
+                  'style="cursor:pointer;opacity:'+op+'" '+
+                  'title="' + titleAttr + '" '+
+                  'onclick="loadHistoryEntry(\'' + escHtml(h.id) + '\')">';
+      } else {
+        rowOpen = '<tr style="opacity:.6">';
+      }
+
+      if (id === 'historyBody') {
+        return rowOpen +
+          '<td>' + targetCell  + '</td>' +
+          '<td>' + escHtml(h.type) + '</td>' +
+          '<td>' + h.findings  + '</td>' +
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
           '<td style="color:var(--red)">'   + (h.critical || 0) + '</td>' +
           '<td style="color:var(--coral)">' + (h.high || 0)     + '</td>' +
           '<td style="color:' + rc + '">'  + h.risk + '/100' + '</td>' +
@@ -339,10 +446,17 @@ function renderHistoryTable() {
           '<td>' + (h.time || '')      + '</td>' +
           '</tr>';
       } else {
+<<<<<<< HEAD
         return '<tr>' +
           '<td>' + escHtml(h.target)          + '</td>' +
           '<td>' + escHtml(h.type)            + '</td>' +
           '<td>' + h.findings                 + '</td>' +
+=======
+        return rowOpen +
+          '<td>' + targetCell  + '</td>' +
+          '<td>' + escHtml(h.type) + '</td>' +
+          '<td>' + h.findings  + '</td>' +
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
           '<td style="color:' + rc + '">'     + h.risk + '/100' + '</td>' +
           '<td>' + (h.time || '')             + '</td>' +
           '</tr>';
@@ -356,6 +470,48 @@ function renderHistoryTable() {
   if (actEl) actEl.style.display = history.length ? 'block' : 'none';
 }
 
+<<<<<<< HEAD
+=======
+/* Click a history row → restore that scan's findings + rendered cards
+   into the appropriate scan-mode tab and switch to the scanner view. */
+function loadHistoryEntry(id) {
+  if (!id) return;
+  var entry = (APP.state.scanHistory || []).filter(function(e){ return e.id === id; })[0];
+  if (!entry) {
+    if (typeof showToast === 'function') showToast('History entry not found.', 'warn');
+    return;
+  }
+  var detail = APP.state.scanHistoryDetail && APP.state.scanHistoryDetail[id];
+  if (!detail) {
+    if (typeof showToast === 'function')
+      showToast('That scan\'s detailed results were not kept in memory (session reset). Re-run the scan to view results again.', 'info');
+    return;
+  }
+
+  var modeMap = { 'SOURCE':'source', 'DOMAIN':'domain', 'IP':'ip' };
+  var mode = modeMap[entry.type] || 'source';
+
+  /* Snapshot whatever's currently visible in the live mode, then
+     overwrite the target mode's slot with the historic detail. */
+  if (APP.state.currentMode && APP.state.currentMode !== mode) {
+    saveModeSnapshot(APP.state.currentMode);
+  }
+  APP.state.modeResults[mode] = {
+    findings:    (detail.findings || []).slice(),
+    networkHtml: detail.networkHtml || '',
+    diffHtml:    detail.diffHtml    || '',
+    codeText:    detail.codeText    || '',
+    when:        detail.when        || Date.now(),
+  };
+
+  setScanMode(mode);                 // swaps panels and calls loadModeSnapshot internally
+  switchView('scanner');             // bring user to where the results render
+
+  if (typeof showToast === 'function')
+    showToast('Restored: ' + entry.target + ' — ' + (entry.date || '') + ' ' + (entry.time || ''), 'success');
+}
+
+>>>>>>> 921b7bd (- IP and Domain/URL Scanner updated\n- Added New sources like wayback, BGP, crt.sh, etc to the scanners.\n- Added the restroing functionality to the history options.\n- Now the IP and URL/Domain Scanner can gather too much information about the Geo Location and other information.\n- The Code Auditor got improved.)
 /* ─── TOASTS ─── */
 
 function showToast(msg, type) {
