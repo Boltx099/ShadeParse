@@ -9,6 +9,9 @@
 ══════════════════════════════════════════ */
 
 function detectLanguage(code) {
+  // Respect manually selected language from UI
+  if (window._selectedLang) return window._selectedLang;
+
   var scores = { js:0, typescript:0, python:0, php:0, java:0, go:0, ruby:0, csharp:0, cpp:0, rust:0, shell:0, sql:0 };
   if (/\b(const|let|var)\s+\w+\s*=|function\s+\w+\s*\(|=>|require\s*\(|module\.exports|document\.|addEventListener/.test(code)) scores.js += 3;
   if (/\.then\s*\(|async\s+function|await\s+|Promise\.|\.catch\s*\(/.test(code)) scores.js += 2;
@@ -513,32 +516,6 @@ function detectConfig(code) {
   return F;
 }
 
-function detectInjection(code) {
-  var F=[], lang=detectLanguage(code), lines=code.split('\n');
-  if(lang==='js'||lang==='typescript'||lang==='generic'){
-    [{re:/["'`](?:SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|UNION)\s[^"'`]*["'`]\s*\+/gi,title:'SQL injection — string concatenation (JS)',sev:'critical',desc:'SQL query built with string concatenation — user input can break out of the query structure.',fix:"db.query('SELECT * FROM users WHERE id = ?', [userId])"},{re:/(?:db|pool|connection|conn|client)\s*\.\s*(?:query|get|run|all|exec|execute)\s*\(\s*(?:query|sql|str|q)\s*[,)]/gi,title:'SQL injection — variable passed directly to db call (JS)',sev:'critical',desc:'A variable (likely assembled via concatenation) is passed directly to a database call without parameterization.',fix:"db.query('SELECT * FROM t WHERE id = ?', [id])"},{re:/exec\s*\(\s*["'`].*\+|execSync\s*\([^)]*\+/g,title:'Command injection — dynamic exec (JS)',sev:'critical',desc:'User input may reach shell exec.',fix:"spawn('cmd', [arg1, arg2], { shell: false })"}].forEach(function(p){
-      var re=new RegExp(p.re.source,p.re.flags),m;
-      while((m=re.exec(code))!==null){var ln=lineOf(code,m.index);F.push({id:'inject-js-'+ln,type:'INJECT',title:p.title,sev:p.sev,loc:'line '+ln,line:ln,snippet:lines[ln-1]?lines[ln-1].trim():m[0],match:m[0].slice(0,80),desc:p.desc,remediation:{text:'Use parameterized queries or safe APIs.',fix:p.fix},confidence:88,taint:{source:'user-controlled input',flow:['unsanitized'],sink:p.title}});}
-    });
-  }
-  if(lang==='python'||lang==='generic'){
-    // Extra pass: catch cur.execute(f"...{var}...") directly — the base PY_SQL pattern covers the variable case
-    var pyDirectFRe = /(?:cursor|conn|db|session|c|cur)\s*\.\s*execute\s*\(\s*f["'][^"'\n]*\{[^}]*\}/gi;
-    var m2;
-    while((m2=pyDirectFRe.exec(code))!==null){
-      var ln2=lineOf(code,m2.index);
-      F.push({id:'inject-py-sql-direct-'+ln2,type:'INJECT',title:'SQL Injection — f-string directly in execute()',sev:'critical',loc:'line '+ln2,line:ln2,snippet:lines[ln2-1]?lines[ln2-1].trim():m2[0],match:m2[0].slice(0,100),desc:'f-string interpolation inside execute() call — user-controlled variables interpolated into SQL are injectable.',remediation:{text:'Use parameterized queries.',fix:'cur.execute("SELECT * FROM users WHERE username=?", (username,))'},confidence:95,taint:{source:'function argument / request data',flow:['f-string interpolation'],sink:'execute()'}});
-    }
-    F=F.concat(runPats(code,PY_SQL,'INJECT','inject-py-sql',null)); F=F.concat(runPats(code,PY_CMD,'INJECT','inject-py-cmd',null));
-  }
-  if(lang==='php'||lang==='generic'){    F=F.concat(runPats(code,PHP_SQL,'INJECT','inject-php-sql',null)); F=F.concat(runPats(code,PHP_CMD,'INJECT','inject-php-cmd',null)); }
-  if(lang==='java'||lang==='generic'){   F=F.concat(runPats(code,JAVA_SQL,'INJECT','inject-java-sql',null)); F=F.concat(runPats(code,JAVA_CMD,'INJECT','inject-java-cmd',null)); }
-  if(lang==='go'||lang==='generic'){     F=F.concat(runPats(code,GO_SQL,'INJECT','inject-go-sql',null)); F=F.concat(runPats(code,GO_CMD,'INJECT','inject-go-cmd',null)); }
-  if(lang==='ruby'||lang==='generic'){   F=F.concat(runPats(code,RUBY_SQL,'INJECT','inject-ruby-sql',null)); F=F.concat(runPats(code,RUBY_CMD,'INJECT','inject-ruby-cmd',null)); }
-  if(lang==='csharp'||lang==='generic')  F=F.concat(runPats(code,CS_SQL,'INJECT','inject-cs-sql',null));
-  return F;
-}
-
 function detectInsecureStorage(code) {
   var F=[], lines=code.split('\n');
   [{re:/localStorage\.setItem\s*\(\s*['"][^'"]*['"]\s*,\s*(?:.*token|.*password|.*secret|.*jwt|.*auth)/gi,title:'Token/password stored in localStorage',sev:'high',desc:'Sensitive data in localStorage accessible to all JS on the page.'},{re:/sessionStorage\.setItem\s*\(\s*['"][^'"]*['"]\s*,\s*(?:.*token|.*password|.*jwt)/gi,title:'Token stored in sessionStorage',sev:'medium',desc:'sessionStorage exfiltrable via XSS.'},{re:/document\.cookie\s*=[^;](?!.*HttpOnly)(?!.*Secure)/gi,title:'Cookie set without Secure/HttpOnly flags',sev:'high',desc:'Cookies without Secure/HttpOnly stolen via sniffing or XSS.'}].forEach(function(p){
@@ -622,3 +599,79 @@ function detectDuplicates(code) {
     return {id:'dup-'+i,type:'LOGIC',title:'Duplicate code block',sev:'medium',loc:'multiple lines',line:1,snippet:dup.slice(0,80),match:'duplicate',desc:'Snippet repeated '+count[dup]+' times.',remediation:{text:'Extract to a shared helper function.',fix:'function helper() { /* shared logic */ }'},confidence:70,taint:null};
   });
 }
+/* ══════════════════════════════════════════
+   KOTLIN / SWIFT / SQL INJECTION PATTERNS
+══════════════════════════════════════════ */
+
+var KOTLIN_SQL = [
+  {re:/rawQuery\s*\(\s*[\"'].*[\"']\s*\+/gi, title:'SQL Injection — rawQuery() + concat (Kotlin/Android)', sev:'critical', desc:'String concatenation in rawQuery() → SQL injection.', fix:'db.rawQuery("SELECT * FROM t WHERE id = ?", arrayOf(userInput))'},
+  {re:/execSQL\s*\(\s*[\"'].*[\"']\s*\+/gi, title:'SQL Injection — execSQL() + concat (Kotlin/Android)', sev:'critical', desc:'String concat in execSQL() is injectable.', fix:'Use parameterized queries with ? placeholders.'},
+];
+
+var SWIFT_SQL = [
+  {re:/sqlite3_exec\s*\([^,]+,\s*(?:[^,]*\+|String\s*\(format:)/gi, title:'SQL Injection — sqlite3_exec() with concat (Swift)', sev:'critical', desc:'sqlite3_exec() with string interpolation/format → injectable.', fix:'Use prepared statements with sqlite3_prepare_v2.'},
+  {re:/execute\s*\(\s*['\"]\s*\\\\?\(\w+\)/gi, title:'SQL Injection — execute() with Swift string interpolation', sev:'critical', desc:'String interpolation \\() in SQL → injectable.', fix:'Use ? placeholders and bind parameters.'},
+];
+
+var SQL_INJECT = [
+  {re:/(?:SELECT|INSERT|UPDATE|DELETE)\s+[^;]*\+\s*\w+/gi, title:'SQL Injection — dynamic SQL concatenation', sev:'critical', desc:'Direct string concatenation in SQL statement — user input can break query structure.', fix:'Use parameterized queries with ? or $N placeholders.'},
+  {re:/EXEC(?:UTE)?\s+\(\s*@\w+\s*\)/gi, title:'SQL Injection — dynamic EXEC() in stored procedure', sev:'critical', desc:'EXEC() with variable argument in SQL → dynamic SQL injection.', fix:'Use sp_executesql with @params parameter.'},
+];
+
+function detectInjection(code) {
+  var F = [], lang = detectLanguage(code), lines = code.split('\n');
+
+  function jsPat(re, id, title, sev, desc, fix) {
+    var r = new RegExp(re.source, re.flags), m;
+    while ((m = r.exec(code)) !== null) {
+      var ln = lineOf(code, m.index);
+      F.push({ id: id+'-'+ln, type:'INJECT', title:title, sev:sev,
+        loc:'line '+ln, line:ln,
+        snippet: lines[ln-1] ? lines[ln-1].trim() : m[0],
+        match: m[0].slice(0,80),
+        desc: desc,
+        remediation: { text:'Use parameterized queries or safe APIs.', fix:fix },
+        confidence: 88, taint:{ source:'user-controlled input', flow:['unsanitized'], sink:title }
+      });
+    }
+  }
+
+  if (lang==='js'||lang==='typescript'||lang==='generic') {
+    jsPat(/["'`](?:SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|UNION)\s[^"'`]*["'`]\s*\+/gi,
+      'inject-js-sql','SQL injection — string concat (JS)','critical',
+      'SQL query built with string concatenation.', "db.query('SELECT * FROM t WHERE id=?',[id])");
+    jsPat(/exec\s*\(\s*["'`].*\+|execSync\s*\([^)]*\+/g,
+      'inject-js-cmd','Command injection — dynamic exec (JS)','critical',
+      'User input may reach shell exec.', "spawn('cmd',[arg],{shell:false})");
+  }
+  if (lang==='python'||lang==='generic') {
+    F = F.concat(runPats(code, PY_SQL,  'INJECT','inject-py-sql', null));
+    F = F.concat(runPats(code, PY_CMD,  'INJECT','inject-py-cmd', null));
+  }
+  if (lang==='php'||lang==='generic') {
+    F = F.concat(runPats(code, PHP_SQL, 'INJECT','inject-php-sql',null));
+    F = F.concat(runPats(code, PHP_CMD, 'INJECT','inject-php-cmd',null));
+  }
+  if (lang==='java'||lang==='generic') {
+    F = F.concat(runPats(code, JAVA_SQL,'INJECT','inject-java-sql',null));
+    F = F.concat(runPats(code, JAVA_CMD,'INJECT','inject-java-cmd',null));
+  }
+  if (lang==='go'||lang==='generic') {
+    F = F.concat(runPats(code, GO_SQL,  'INJECT','inject-go-sql', null));
+    F = F.concat(runPats(code, GO_CMD,  'INJECT','inject-go-cmd', null));
+  }
+  if (lang==='ruby'||lang==='generic') {
+    F = F.concat(runPats(code, RUBY_SQL,'INJECT','inject-ruby-sql',null));
+    F = F.concat(runPats(code, RUBY_CMD,'INJECT','inject-ruby-cmd',null));
+  }
+  if (lang==='csharp'||lang==='generic')
+    F = F.concat(runPats(code, CS_SQL,  'INJECT','inject-cs-sql', null));
+  if (lang==='kotlin'||lang==='generic')
+    F = F.concat(runPats(code, KOTLIN_SQL,'INJECT','inject-kotlin-sql',null));
+  if (lang==='swift'||lang==='generic')
+    F = F.concat(runPats(code, SWIFT_SQL, 'INJECT','inject-swift-sql',null));
+  if (lang==='sql')
+    F = F.concat(runPats(code, SQL_INJECT,'INJECT','inject-sql',null));
+  return F;
+}
+

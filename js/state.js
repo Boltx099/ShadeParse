@@ -20,6 +20,13 @@ var APP = {
     scanCount:    0,
     scanHistory:  [],
     currentMode:  'source',   /* 'source' | 'domain' | 'ip' */
+    /* Per-mode snapshot of last scan results so each scanner tab keeps
+       its own findings + rendered DOM when switching between modes. */
+    modeResults:  { source: null, domain: null, ip: null },
+    /* Full per-history-entry detail (findings + rendered DOM) keyed by
+       entry id. Session-scoped — not persisted to localStorage to avoid
+       quota issues. Lets a user click an old scan and view its results. */
+    scanHistoryDetail: {},
   },
 
   cfg: {
@@ -64,13 +71,22 @@ function saveHistory() {
   }
 }
 
-function addHistoryEntry(entry) {
+function addHistoryEntry(entry, detail) {
+  /* Stable id so the table row can later restore the saved detail. */
+  if (!entry.id) {
+    entry.id = 'hist-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  }
   APP.state.scanHistory.push(entry);
   saveHistory();
+  if (detail) {
+    if (!APP.state.scanHistoryDetail) APP.state.scanHistoryDetail = {};
+    APP.state.scanHistoryDetail[entry.id] = detail;
+  }
 }
 
 function clearHistory() {
   APP.state.scanHistory = [];
+  APP.state.scanHistoryDetail = {};
   saveHistory();
   if (typeof renderHistoryTable === 'function') renderHistoryTable();
   if (typeof showToast === 'function') showToast('Scan history cleared.', 'info');
