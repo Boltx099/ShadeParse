@@ -55,6 +55,12 @@
       <svg viewBox="0 0 20 20"><rect x="2" y="2" width="7" height="7" rx="1"/><rect x="11" y="2" width="7" height="7" rx="1"/><rect x="2" y="11" width="7" height="7" rx="1"/><rect x="11" y="11" width="7" height="7" rx="1"/></svg>
       Dashboard
     </button>
+    <button class="sb-item" data-view="siem" onclick="switchView('siem')">
+      <svg viewBox="0 0 20 20"><path d="M3 4h14v2H3zm0 5h14v2H3zm0 5h8v2H3z" fill="currentColor"/><circle cx="16" cy="14" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M18.5 16.5l1.5 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      SIEM
+      <span class="sb-badge" id="sbSiemBadge" style="display:none"></span>
+      <span class="sb-new">NEW</span>
+    </button>
 
     <div class="sb-group-label">RESULTS</div>
     <button class="sb-item" data-view="findings" onclick="switchView('findings')">
@@ -254,6 +260,36 @@
             <div class="input-toolbar">
               <span class="input-label">SOURCE CODE</span>
               <div class="input-actions">
+                <div class="lang-tabs-wrap">
+                  <span class="lang-tabs-label">LANG:</span>
+                  <div class="lang-select-wrap">
+                    <select id="langSelect" class="lang-select" onchange="setLangFromSelect(this)">
+                      <option value="auto"       selected>⚡ Auto-Detect</option>
+                      <optgroup label="Web">
+                        <option value="js">JavaScript</option>
+                        <option value="typescript">TypeScript</option>
+                        <option value="php">PHP</option>
+                        <option value="sql">SQL</option>
+                        <option value="solidity">Solidity</option>
+                      </optgroup>
+                      <optgroup label="Backend">
+                        <option value="python">Python</option>
+                        <option value="java">Java</option>
+                        <option value="go">Go</option>
+                        <option value="ruby">Ruby</option>
+                        <option value="csharp">C#</option>
+                        <option value="kotlin">Kotlin</option>
+                        <option value="swift">Swift</option>
+                      </optgroup>
+                      <optgroup label="Systems">
+                        <option value="cpp">C / C++</option>
+                        <option value="rust">Rust</option>
+                        <option value="shell">Shell / Bash</option>
+                      </optgroup>
+                    </select>
+                    <span class="lang-select-arrow">▾</span>
+                  </div>
+                </div>
                 <button class="tb-btn" onclick="loadSample('xss')">XSS Sample</button>
                 <button class="tb-btn" onclick="loadSample('secrets')">Secrets Sample</button>
                 <button class="tb-btn" onclick="loadSample('supply')">Supply Chain Sample</button>
@@ -318,7 +354,7 @@
               </div>
               <div class="target-field">
                 <input type="text" id="ipTargetInput" class="target-input" placeholder="x.x.x.x" spellcheck="false" />
-                <button class="target-scan-btn" onclick="runIpScan()">
+                <button class="target-scan-btn" id="ipScanBtn" onclick="runIpScan()">
                   <svg viewBox="0 0 20 20"><path d="M6 4l10 6-10 6V4z" fill="currentColor"/></svg>
                   SCAN IP
                 </button>
@@ -560,6 +596,338 @@
       </div>
     </section>
 
+    <!-- ════════ SIEM VIEW ════════ -->
+    <section class="view" id="view-siem">
+      <div class="view-header siem-view-header">
+        <!-- Row 1: SIEM title on left, subtitle on right -->
+        <div class="siem-title-row">
+          <h1 class="view-title">SIEM</h1>
+          <p class="view-sub siem-sub-right">Log ingestion, behavioral analysis, and threat correlation</p>
+        </div>
+        <!-- Row 2: Full-width search bar below title row -->
+        <div class="siem-header-search" id="siemLogSearchBar">
+          <div class="siem-logsearch-input-wrap">
+            <span class="siem-logsearch-icon">⌕</span>
+            <input
+              type="text"
+              id="siemLogSearchInput"
+              class="siem-logsearch-input"
+              placeholder="Search logs… IP, keyword, path, status code"
+              autocomplete="off"
+              oninput="siemLogSearchApply()"
+              onkeydown="siemLogSearchNav(event)"
+            />
+            <span class="siem-logsearch-count" id="siemLogSearchCount"></span>
+            <button class="siem-logsearch-nav" id="siemLogNavUp"   onclick="siemLogSearchStep(-1)" title="Previous match">▲</button>
+            <button class="siem-logsearch-nav" id="siemLogNavDown" onclick="siemLogSearchStep(1)"  title="Next match">▼</button>
+            <button class="siem-logsearch-clear" onclick="siemLogSearchClear()" title="Clear">✕</button>
+          </div>
+          <!-- Absolutely positioned dropdown — never pushes layout -->
+          <div id="siemLogMatchViewer" class="siem-logmatch-viewer" style="display:none;"></div>
+        </div>
+      </div>
+
+      <!-- ── Top layout: left (input + pipeline) / right (audit log) ── -->
+      <div class="scanner-layout" style="display:flex;gap:0;align-items:start;">
+
+        <!-- ── LEFT PANEL ── -->
+        <div class="scanner-left" style="flex:1 1 auto;min-width:280px;">
+
+          <!-- Log Input -->
+          <div class="input-panel">
+            <div class="input-toolbar">
+              <span class="input-label">LOG INPUT</span>
+              <div class="input-actions">
+                <select id="siemLogFormat" class="lang-select" style="width:auto">
+                  <option value="auto">⚡ Auto-Detect</option>
+                  <option value="log">Plain / .log</option>
+                  <option value="json">JSON Array</option>
+                  <option value="jsonl">JSONL</option>
+                  <option value="csv">CSV</option>
+                </select>
+                <button class="tb-btn" onclick="siemLoadSample()">Load Sample</button>
+                <button class="tb-btn danger" onclick="document.getElementById('siemLogPaste').value='';siemLogSearchClear();">Clear</button>
+              </div>
+            </div>
+
+            <!-- Drop zone -->
+            <div class="drop-zone" id="siemDropZone">
+              <svg viewBox="0 0 48 48"><path d="M24 4v28m0-28l-9 9m9-9l9 9M6 36h36" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+              <span>Drop .log / .json / .csv or click to upload</span>
+              <span id="siemFileName" style="display:none;font-weight:700;color:var(--accent);margin-left:8px"></span>
+              <input type="file" id="siemFileInput" accept=".log,.json,.jsonl,.csv,.txt"
+                     onchange="siemShowFileName(this.files[0]&&this.files[0].name||'')">
+            </div>
+
+            <textarea class="code-input" id="siemLogPaste"
+              placeholder="Paste raw log lines, JSON log arrays, or CSV data here...&#10;&#10;Supports: Apache/Nginx access logs, custom app logs, JSON structured logs, CSV exports&#10;&#10;Or drop a file above."
+              spellcheck="false" style="height:180px;margin-top:6px;" oninput="siemLogSearchApply()"></textarea>
+
+          </div>
+
+          <!-- ── SYSTEM LOG FORWARDING PANEL ── -->
+          <div class="siem-forward-panel" id="siemForwardPanel">
+            <div class="siem-forward-header" onclick="siemToggleForward()">
+              <span class="siem-forward-icon">⇌</span>
+              <span class="siem-forward-title">SYSTEM LOG FORWARDING</span>
+              <span class="siem-forward-badge" id="siemForwardBadge">INACTIVE</span>
+              <span class="siem-forward-chevron" id="siemForwardChevron">▼</span>
+            </div>
+            <div class="siem-forward-body" id="siemForwardBody" style="display:none;">
+              <!-- Source type tabs -->
+              <div class="siem-forward-tabs">
+                <button class="siem-ftab active" data-src="file" onclick="siemForwardTab(this,'file')">📄 File / Path</button>
+                <button class="siem-ftab" data-src="syslog" onclick="siemForwardTab(this,'syslog')">🖧 Syslog UDP</button>
+                <button class="siem-ftab" data-src="journal" onclick="siemForwardTab(this,'journal')">📋 Journald</button>
+                <button class="siem-ftab" data-src="custom" onclick="siemForwardTab(this,'custom')">⚙ Custom</button>
+              </div>
+
+              <!-- FILE source -->
+              <div class="siem-fsrc" id="siemFSrc-file">
+                <div class="siem-forward-row">
+                  <label class="siem-flabel">Log File Path</label>
+                  <input type="text" class="siem-finput" id="siemFwdFilePath" placeholder="/var/log/nginx/access.log  or  C:\Windows\System32\winevt\Logs\Security.evtx" />
+                </div>
+                <div class="siem-forward-row">
+                  <label class="siem-flabel">Tail Mode</label>
+                  <select class="siem-fselect" id="siemFwdFileTail">
+                    <option value="tail">Tail — follow new lines</option>
+                    <option value="full">Full file — one-shot import</option>
+                  </select>
+                </div>
+                <div class="siem-forward-hint">The backend agent watches the file and forwards new lines in real time. Supports .log, .txt, .json, .jsonl, Windows Event Log (.evtx).</div>
+              </div>
+
+              <!-- SYSLOG source -->
+              <div class="siem-fsrc" id="siemFSrc-syslog" style="display:none;">
+                <div class="siem-forward-row">
+                  <label class="siem-flabel">Listen Address</label>
+                  <input type="text" class="siem-finput" id="siemFwdSyslogAddr" placeholder="0.0.0.0" />
+                </div>
+                <div class="siem-forward-row">
+                  <label class="siem-flabel">UDP Port</label>
+                  <input type="number" class="siem-finput" id="siemFwdSyslogPort" placeholder="514" value="514" style="width:90px;" />
+                </div>
+                <div class="siem-forward-hint">Point your routers, firewalls, or network devices to this address. RFC-3164 / RFC-5424 syslog format supported.</div>
+              </div>
+
+              <!-- JOURNALD source -->
+              <div class="siem-fsrc" id="siemFSrc-journal" style="display:none;">
+                <div class="siem-forward-row">
+                  <label class="siem-flabel">Unit Filter</label>
+                  <input type="text" class="siem-finput" id="siemFwdJournalUnit" placeholder="nginx, sshd, docker  —  leave blank for all" />
+                </div>
+                <div class="siem-forward-row">
+                  <label class="siem-flabel">Min Priority</label>
+                  <select class="siem-fselect" id="siemFwdJournalPrio">
+                    <option value="0">Emergency (0)</option>
+                    <option value="3">Error+ (3)</option>
+                    <option value="4">Warning+ (4)</option>
+                    <option value="6" selected>Info+ (6)</option>
+                    <option value="7">Debug (7)</option>
+                  </select>
+                </div>
+                <div class="siem-forward-hint">Streams systemd journal on Linux directly into the SIEM pipeline via <code style="background:var(--surface2);padding:1px 4px;border-radius:3px;">journalctl -f</code>.</div>
+              </div>
+
+              <!-- CUSTOM source -->
+              <div class="siem-fsrc" id="siemFSrc-custom" style="display:none;">
+                <div class="siem-forward-row">
+                  <label class="siem-flabel">Webhook URL</label>
+                  <input type="text" class="siem-finput" id="siemFwdCustomUrl" placeholder="http://your-log-shipper:8888/api/forward" />
+                </div>
+                <div class="siem-forward-row">
+                  <label class="siem-flabel">Auth Token</label>
+                  <input type="password" class="siem-finput" id="siemFwdCustomToken" placeholder="Bearer token or API key" />
+                </div>
+                <div class="siem-forward-hint">POST log lines to this ShadeParse endpoint from Logstash, Fluentd, Vector, or any custom log shipper.</div>
+              </div>
+
+              <!-- Action row -->
+              <div class="siem-forward-actions">
+                <button class="run-btn" style="font-size:11px;padding:6px 16px;" id="siemFwdStartBtn" onclick="siemForwardStart()">▶ Connect Source</button>
+                <button class="action-btn" id="siemFwdStopBtn" onclick="siemForwardStop()" style="display:none;">■ Disconnect</button>
+                <button class="action-btn" onclick="siemForwardTest()">⚡ Ping / Test</button>
+                <span class="siem-fwd-status" id="siemFwdStatus"></span>
+              </div>
+
+              <!-- Config snippet -->
+              <div class="siem-forward-snippet" id="siemFwdSnippet" style="display:none;">
+                <div class="siem-flabel" style="margin-bottom:4px;">▸ One-liner to forward from your server:</div>
+                <pre class="siem-fwd-code" id="siemFwdCode"></pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pipeline visualization -->
+          <div class="pipeline-wrap">
+            <div class="pipe-header">
+              <span>SIEM PIPELINE</span>
+              <div class="pipe-progress">
+                <div class="prog-track"><div class="prog-fill" id="siemProgFill"></div></div>
+                <span class="prog-label" id="siemProgLabel">Idle</span>
+              </div>
+            </div>
+            <div class="pipe-list" id="siemPipeList"></div>
+          </div>
+
+          <!-- Stage counters (shown after analysis) -->
+          <div id="siemStageCounts" class="siem-stage-counts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"></div>
+
+          <div class="scan-actions">
+            <button class="run-btn" id="siemRunBtn" onclick="siemRunAnalysis()">
+              <svg viewBox="0 0 20 20"><path d="M6 4l10 6-10 6V4z" fill="currentColor"/></svg>
+              Run Analysis
+            </button>
+            <button class="action-btn" onclick="siemExportJSON()">Export JSON</button>
+            <button class="action-btn" onclick="siemClearResults()">Clear</button>
+          </div>
+        </div>
+
+        <!-- ── Splitter ── -->
+        <div class="scanner-splitter"></div>
+
+        <!-- ── RIGHT PANEL — audit log ── -->
+        <div class="scanner-right" style="flex:0 0 260px;min-width:200px;">
+          <div class="log-panel" style="height:420px">
+            <div class="log-header">
+              <span>SIEM AUDIT LOG</span>
+            </div>
+            <div class="log-scroll" id="siemAuditLog"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── RESULTS PANEL ── -->
+      <div id="siemResultsPanel" style="display:none;margin-top:20px">
+
+        <!-- Severity counters row -->
+        <div class="siem-section-title">SEVERITY OVERVIEW</div>
+        <div id="siemSevCounters" class="siem-sev-row"></div>
+
+        <!-- Alerts table -->
+        <div class="siem-section-title" style="margin-top:20px">
+          DETECTED THREATS
+          <span class="siem-section-hint">Click a row to expand evidence</span>
+        </div>
+
+        <!-- ELK-style search rule bar -->
+        <div class="siem-search-bar" id="siemSearchBar">
+          <div class="siem-search-input-wrap">
+            <span class="siem-search-icon">⌕</span>
+            <input
+              type="text"
+              id="siemSearchInput"
+              class="siem-search-input"
+              placeholder='Search alerts… e.g. severity:HIGH  ip:10.0.0  type:SQLi  score:>70'
+              autocomplete="off"
+              oninput="siemApplySearch()"
+            />
+            <button class="siem-search-clear" id="siemSearchClear" onclick="siemClearSearch()" title="Clear search">✕</button>
+          </div>
+
+          <!-- Active filter chips -->
+          <div class="siem-filter-chips" id="siemFilterChips"></div>
+
+          <!-- Quick-filter severity buttons -->
+          <div class="siem-quick-filters" id="siemQuickFilters">
+            <span class="siem-qf-label">Quick filter:</span>
+            <button class="siem-qf-btn" data-field="severity" data-val="CRITICAL" onclick="siemQuickFilter(this)">⛔ CRITICAL</button>
+            <button class="siem-qf-btn" data-field="severity" data-val="HIGH"     onclick="siemQuickFilter(this)">🔴 HIGH</button>
+            <button class="siem-qf-btn" data-field="severity" data-val="MEDIUM"   onclick="siemQuickFilter(this)">🟡 MEDIUM</button>
+            <button class="siem-qf-btn" data-field="severity" data-val="LOW"      onclick="siemQuickFilter(this)">🟢 LOW</button>
+            <button class="siem-qf-btn" data-field="type"     data-val="SQL"      onclick="siemQuickFilter(this)">SQL Injection</button>
+            <button class="siem-qf-btn" data-field="type"     data-val="XSS"      onclick="siemQuickFilter(this)">XSS</button>
+            <button class="siem-qf-btn" data-field="type"     data-val="Brute"    onclick="siemQuickFilter(this)">Brute Force</button>
+            <button class="siem-qf-btn siem-qf-score" data-field="score" data-val="75" onclick="siemQuickFilter(this)">Score ≥ 75</button>
+          </div>
+
+          <div class="siem-search-hint" id="siemSearchHint"></div>
+        </div>
+
+        <div class="siem-table-wrap">
+          <table class="siem-alerts-table">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Attack Type</th>
+                <th>Source IP</th>
+                <th>Timestamp</th>
+                <th>Endpoint</th>
+                <th>Risk Score</th>
+              </tr>
+            </thead>
+            <tbody id="siemAlertsBody"></tbody>
+          </table>
+          <div id="siemAlertsEmpty" class="siem-empty-msg" style="display:none">
+            No alerts detected — logs appear clean.
+          </div>
+        </div>
+
+        <!-- Timeline -->
+        <div class="siem-section-title" style="margin-top:20px">IP ACTIVITY TIMELINE</div>
+        <div id="siemTimeline" class="siem-timeline-wrap"></div>
+      </div>
+
+      <!-- ── LIVE MONITOR PANEL ──────────────────────────────────────────── -->
+      <div class="siem-live-panel" id="siemLivePanel">
+        <div class="siem-live-header">
+          <div class="siem-live-title-row">
+            <span class="siem-live-dot" id="siemLiveDot"></span>
+            <span class="siem-live-title">LIVE LOG MONITOR</span>
+            <span class="siem-live-badge" id="siemLiveBadge">OFFLINE</span>
+          </div>
+          <div class="siem-live-controls">
+            <button class="siem-live-btn siem-live-connect" id="siemLiveConnectBtn" onclick="siemLiveConnect()">Connect Stream</button>
+            <button class="siem-live-btn" id="siemLiveResetBtn" onclick="siemLiveReset()" style="display:none">Reset Session</button>
+          </div>
+        </div>
+
+        <!-- Stats row -->
+        <div class="siem-live-stats" id="siemLiveStats">
+          <div class="siem-live-stat"><div class="siem-live-stat-val" id="siemLiveLines">0</div><div class="siem-live-stat-lbl">Lines Ingested</div></div>
+          <div class="siem-live-stat"><div class="siem-live-stat-val" id="siemLiveAlerts">0</div><div class="siem-live-stat-lbl">Alerts Fired</div></div>
+          <div class="siem-live-stat"><div class="siem-live-stat-val siem-live-crit" id="siemLiveCrit">0</div><div class="siem-live-stat-lbl">Critical</div></div>
+          <div class="siem-live-stat"><div class="siem-live-stat-val siem-live-high" id="siemLiveHigh">0</div><div class="siem-live-stat-lbl">High</div></div>
+          <div class="siem-live-stat"><div class="siem-live-stat-val" id="siemLiveIPs">0</div><div class="siem-live-stat-lbl">Active IPs</div></div>
+        </div>
+
+        <!-- Log ingest input -->
+        <div class="siem-live-ingest" id="siemLiveIngest" style="display:none">
+          <div class="siem-section-title" style="margin:0 0 8px">PUSH LOG LINES</div>
+          <div class="siem-live-ingest-row">
+            <textarea
+              id="siemLiveInput"
+              class="siem-live-textarea"
+              placeholder="Paste a log line (or multiple lines) and press Send — or simulate a stream with the generator below"
+              rows="3"
+            ></textarea>
+            <button class="run-btn" style="align-self:flex-end;white-space:nowrap" onclick="siemLiveSend()">Send →</button>
+          </div>
+
+          <!-- Simulate button -->
+          <div class="siem-live-sim-row">
+            <button class="siem-live-btn" id="siemLiveSimBtn" onclick="siemLiveToggleSim()">▶ Start Simulator</button>
+            <select id="siemLiveSimSpeed" class="lang-select" style="width:auto;font-size:10px">
+              <option value="800">Normal (0.8 s)</option>
+              <option value="300">Fast (0.3 s)</option>
+              <option value="100">Stress (0.1 s)</option>
+            </select>
+            <span class="siem-live-sim-hint">Streams realistic attack logs automatically</span>
+          </div>
+        </div>
+
+        <!-- Live alert feed -->
+        <div class="siem-live-feed-wrap" id="siemLiveFeedWrap" style="display:none">
+          <div class="siem-section-title" style="margin:12px 0 6px">LIVE ALERT FEED</div>
+          <div class="siem-live-feed" id="siemLiveFeed">
+            <div class="siem-live-feed-empty">Waiting for events…</div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
   </div><!-- end view-area -->
 
 </main>
@@ -572,11 +940,26 @@
 <script src="js/state.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/detectors.js"></script>
+<script src="js/audits/js_audit.js"></script>
+<script src="js/audits/python_audit.js"></script>
+<script src="js/audits/php_audit.js"></script>
+<script src="js/audits/java_audit.js"></script>
+<script src="js/audits/go_audit.js"></script>
+<script src="js/audits/ruby_audit.js"></script>
+<script src="js/audits/cpp_audit.js"></script>
+<script src="js/audits/csharp_audit.js"></script>
+<script src="js/audits/rust_audit.js"></script>
+<script src="js/audits/shell_audit.js"></script>
+<script src="js/audits/kotlin_audit.js"></script>
+<script src="js/audits/swift_audit.js"></script>
+<script src="js/audits/sql_audit.js"></script>
 <script src="js/samples.js"></script>
 <script src="js/scanner.js"></script>
 <script src="js/network.js"></script>
+<script src="js/lang-audit.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/export.js"></script>
+<script src="js/siem.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
