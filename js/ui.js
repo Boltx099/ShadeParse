@@ -16,6 +16,7 @@ var VIEW_NAMES = {
   scanner:   'Scanner',
   network:   'Network Recon',
   dashboard: 'Dashboard',
+  siem:      'SIEM',
   findings:  'Findings',
   export:    'Export',
   history:   'History',
