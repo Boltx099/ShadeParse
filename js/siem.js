@@ -41,6 +41,111 @@ var SEV_CONFIG = {
   INFO:     { color: 'var(--teal)',   icon: 'ℹ️', order: 0 },
 };
 
+/* ─── MITRE ATT&CK MAPPING (§2.1) ────────────────────────────────────────── */
+var MITRE_MAP = {
+  'SQL Injection':              { id:'T1190',     name:'Exploit Public-Facing Application',   tactic:'Initial Access' },
+  'Cross-Site Scripting (XSS)': { id:'T1059.007', name:'Command/Scripting Interpreter: JS',   tactic:'Execution' },
+  'Directory Brute Force':      { id:'T1595.003', name:'Active Scanning: Wordlist Scanning',  tactic:'Reconnaissance' },
+  'Security Scanner':           { id:'T1595.002', name:'Active Scanning: Vulnerability Scan', tactic:'Reconnaissance' },
+  'High-Frequency Requests':    { id:'T1499.002', name:'Endpoint DoS: Service Exhaustion',    tactic:'Impact' },
+  'Brute Force Login':          { id:'T1110',     name:'Brute Force',                         tactic:'Credential Access' },
+  'Credential Stuffing':        { id:'T1110.004', name:'Brute Force: Credential Stuffing',    tactic:'Credential Access' },
+  'Beacon Candidate':           { id:'T1071.001', name:'Application Layer Protocol: Web',     tactic:'Command & Control' },
+  'Tor Exit Source':            { id:'T1090.003', name:'Multi-hop Proxy: Tor',                tactic:'Command & Control' },
+  'DGA Domain':                 { id:'T1568.002', name:'Dynamic Resolution: DGA',             tactic:'Command & Control' },
+  'Escalated: Multi-Hit Source':{ id:'T1078',     name:'Valid Accounts (composite)',          tactic:'Initial Access' },
+};
+function siemMitreFor(alertType) {
+  if (!alertType) return null;
+  if (MITRE_MAP[alertType]) return MITRE_MAP[alertType];
+  // Honeypot path entries are typed "Honeypot Path: <label>"
+  if (alertType.indexOf('Honeypot Path') === 0) {
+    return { id:'T1083', name:'File and Directory Discovery', tactic:'Discovery' };
+  }
+  return null;
+}
+
+/* ─── HONEYPOT PATHS (§2.3) ──────────────────────────────────────────────── */
+var HONEYPOT_PATHS = [
+  { re: /^\/\.env(?:\.|$)/i,                                 sev:'CRITICAL', label:'.env access' },
+  { re: /^\/\.git\/(?:HEAD|config|index|logs)/i,             sev:'CRITICAL', label:'.git directory' },
+  { re: /^\/\.aws\/credentials/i,                            sev:'CRITICAL', label:'AWS credentials' },
+  { re: /^\/\.ssh\/(?:id_rsa|id_dsa|authorized_keys)/i,      sev:'CRITICAL', label:'SSH keys' },
+  { re: /^\/_ignition\/execute-solution/i,                   sev:'CRITICAL', label:'Laravel Ignition RCE' },
+  { re: /^\/wp-config\.php/i,                                sev:'CRITICAL', label:'wp-config.php' },
+  { re: /^\/wp-(?:admin|login)\.php/i,                       sev:'HIGH',     label:'WordPress admin' },
+  { re: /^\/phpmyadmin/i,                                    sev:'HIGH',     label:'phpMyAdmin' },
+  { re: /^\/server-status/i,                                 sev:'HIGH',     label:'Apache server-status' },
+  { re: /^\/phpinfo\.php/i,                                  sev:'HIGH',     label:'phpinfo' },
+  { re: /^\/admin(?:\/|$)/i,                                 sev:'MEDIUM',   label:'/admin' },
+  { re: /^\/(?:console|jenkins|grafana|prometheus)(?:\/|$)/i,sev:'MEDIUM',   label:'admin console' },
+  { re: /^\/api\/v1\/swagger/i,                              sev:'LOW',      label:'Swagger UI' },
+  { re: /^\/\.DS_Store/i,                                    sev:'LOW',      label:'.DS_Store' },
+];
+var HONEYPOT_SEV_SCORE = { CRITICAL:90, HIGH:75, MEDIUM:55, LOW:30 };
+
+/* ─── §0.7 SHARED HELPERS ────────────────────────────────────────────────── */
+function siemAlertSignature(alert) {
+  return [alert.type, alert.severity, alert.ip||'-',
+          alert.endpoint||'-', alert.timestamp||'-'].join('|');
+}
+
+function siemAppendKqlToken(field, value) {
+  var input = document.getElementById('siemSearchInput');
+  if (!input) return;
+  var v = String(value);
+  var token;
+  if (field === 'any') token = /\s/.test(v) ? '"'+v+'"' : v;
+  else                 token = field + ':' + (/\s/.test(v) ? '"'+v+'"' : v);
+  // Skip if same token already present
+  var existing = input.value.split(/\s+/).filter(Boolean);
+  if (existing.indexOf(token) === -1) {
+    input.value = (input.value.trim() + ' ' + token).trim();
+  }
+  if (typeof siemApplySearch === 'function') siemApplySearch();
+}
+
+function siemTopN(alerts, fieldGetter, n) {
+  var counts = {};
+  alerts.forEach(function(a){
+    var v = fieldGetter(a);
+    if (v == null || v === '') return;
+    counts[v] = (counts[v]||0) + 1;
+  });
+  return Object.keys(counts)
+    .map(function(k){ return [k, counts[k]]; })
+    .sort(function(a,b){ return b[1]-a[1]; })
+    .slice(0, n||10);
+}
+
+function siemPickBucketMs(rangeMs) {
+  var target = Math.max(1, rangeMs / 50);
+  var candidates = [
+    1e3, 5e3, 10e3, 30e3,
+    60e3, 5*60e3, 10*60e3, 30*60e3,
+    3.6e6, 6*3.6e6, 24*3.6e6,
+    7*24*3.6e6
+  ];
+  for (var i=0;i<candidates.length;i++)
+    if (candidates[i] >= target) return candidates[i];
+  return candidates[candidates.length-1];
+}
+
+function siemFmtBucket(ms, bucketMs) {
+  var d = new Date(ms);
+  if (bucketMs >= 24*3.6e6)  return d.toISOString().slice(0,10);
+  if (bucketMs >= 3.6e6)     return d.toISOString().slice(11,13)+':00';
+  return d.toISOString().slice(11,16);
+}
+
+/* ─── §1.4 TIME-RANGE STATE ──────────────────────────────────────────────── */
+var SIEM_TIMERANGE = {
+  active:  false,
+  startMs: null,
+  endMs:   null,
+  preset:  'all',
+};
+
 /* ─── PIPELINE RENDERER ──────────────────────────────────────────────────── */
 
 function siemRenderPipe(activeId, doneIds) {
@@ -200,8 +305,18 @@ function siemHandleResult(data) {
     'ok'
   );
 
+  // Tag every alert with its MITRE technique (§2.1)
+  (data.alerts || []).forEach(function(a) {
+    if (!a.mitre) {
+      var m = siemMitreFor(a.type);
+      if (m) a.mitre = m;
+    }
+  });
+
   siemRenderSeverityCounters(data.severity || {});
   siemRenderAlertsTable(data.alerts || []);
+  siemRenderTimelineHisto(data.alerts || []);   // §1.1
+  siemRenderTopN(data.alerts || []);            // §1.2
   siemRenderTimeline(data.timeline || []);
   siemRenderStageCounts(data.stage_counts || {});
 
@@ -245,27 +360,49 @@ function siemClientSideAnalyze(raw) {
     var mthM = line.match(/"(GET|POST|PUT|DELETE|PATCH)\s+([^\s"]+)/);
     var mth  = mthM ? mthM[1] : null;
     var ep   = mthM ? mthM[2] : null;
+    // Status code & UA extraction (§1.2 widgets, §0.2 Alert shape)
+    var stM  = line.match(/"\s+(\d{3})\s+/);
+    var st   = stM ? stM[1] : null;
+    var uaM  = line.match(/"([^"]+)"\s*$/);
+    var ua   = uaM ? uaM[1] : null;
 
     if (ip) {
       ipStats[ip] = (ipStats[ip] || 0) + 1;
     }
 
-    // SQLi
-    var sqli = _CLIENT_SQLI.some(function(r) { return r.test(line); });
-    if (sqli) alerts.push({ type: 'SQL Injection', severity: 'HIGH', ip: ip, timestamp: ts, endpoint: ep, evidence: line.slice(0, 200), risk_score: 75 });
-
-    // XSS
-    var xss = _CLIENT_XSS.some(function(r) { return r.test(line); });
-    if (xss)  alerts.push({ type: 'Cross-Site Scripting (XSS)', severity: 'HIGH', ip: ip, timestamp: ts, endpoint: ep, evidence: line.slice(0, 200), risk_score: 70 });
-
-    // Dir brute
-    if (ep && _CLIENT_BRUTE.test(ep)) {
-      alerts.push({ type: 'Directory Brute Force', severity: 'MEDIUM', ip: ip, timestamp: ts, endpoint: ep, evidence: ep, risk_score: 50 });
+    function mk(type, sev, score, evidence, extra) {
+      var a = { type:type, severity:sev, ip:ip, timestamp:ts, endpoint:ep,
+                evidence: evidence || line.slice(0, 200), risk_score:score,
+                method:mth, status:st, ua:ua };
+      if (extra) Object.assign(a, extra);
+      return a;
     }
 
+    // SQLi
+    if (_CLIENT_SQLI.some(function(r) { return r.test(line); }))
+      alerts.push(mk('SQL Injection', 'HIGH', 75));
+
+    // XSS
+    if (_CLIENT_XSS.some(function(r) { return r.test(line); }))
+      alerts.push(mk('Cross-Site Scripting (XSS)', 'HIGH', 70));
+
+    // Dir brute
+    if (ep && _CLIENT_BRUTE.test(ep))
+      alerts.push(mk('Directory Brute Force', 'MEDIUM', 50, ep));
+
     // Scanner UA
-    if (_CLIENT_SCAN.test(line)) {
-      alerts.push({ type: 'Security Scanner', severity: 'MEDIUM', ip: ip, timestamp: ts, endpoint: ep, evidence: line.slice(0, 200), risk_score: 55 });
+    if (_CLIENT_SCAN.test(line))
+      alerts.push(mk('Security Scanner', 'MEDIUM', 55));
+
+    // Honeypot path hits (§2.3) — explicit list of "must never be touched" paths
+    if (ep) {
+      HONEYPOT_PATHS.forEach(function(h) {
+        if (h.re.test(ep)) {
+          alerts.push(mk('Honeypot Path: '+h.label, h.sev,
+                         HONEYPOT_SEV_SCORE[h.sev] || 50, undefined,
+                         { tags: ['recon','honeypot'], patterns: ['honeypot:'+h.label] }));
+        }
+      });
     }
   });
 
@@ -338,9 +475,15 @@ function siemRenderAlertsTable(alerts) {
   alerts.forEach(function(alert, idx) {
     var cfg    = SEV_CONFIG[alert.severity] || SEV_CONFIG.INFO;
     var sevBdg = '<span class="siem-sev-badge" style="background:' + cfg.color + '22;color:' + cfg.color + ';border-color:' + cfg.color + '44">' + escHtml(alert.severity) + '</span>';
-    var ip     = alert.ip        ? escHtml(alert.ip)       : '<span class="siem-na">N/A</span>';
+    var ip     = alert.ip
+      ? '<span class="siem-filterable" data-field="ip" data-val="'+escHtml(alert.ip)+'" '+
+        'title="Click to filter by ip:'+escHtml(alert.ip)+'">'+escHtml(alert.ip)+'</span>'
+      : '<span class="siem-na">N/A</span>';
     var ts     = alert.timestamp ? escHtml(alert.timestamp.slice(0,19)) : '<span class="siem-na">—</span>';
-    var ep     = alert.endpoint  ? '<code class="siem-path">' + escHtml(alert.endpoint.slice(0,60)) + '</code>' : '<span class="siem-na">—</span>';
+    var ep     = alert.endpoint
+      ? '<code class="siem-path siem-filterable" data-field="endpoint" data-val="'+escHtml(alert.endpoint)+'" '+
+        'title="Click to filter by endpoint">'+escHtml(alert.endpoint.slice(0,60))+'</code>'
+      : '<span class="siem-na">—</span>';
     var occ    = alert.occurrences > 1 ? '<span class="siem-occ">×' + alert.occurrences + '</span>' : '';
     var score  = alert.risk_score || 0;
     var fill   = Math.min(100, score);
@@ -348,7 +491,14 @@ function siemRenderAlertsTable(alerts) {
 
     html += '<tr class="siem-row" onclick="siemToggleDetail(' + idx + ')">';
     html += '<td>' + sevBdg + '</td>';
-    html += '<td><strong>' + escHtml(alert.type) + '</strong>' + occ + '</td>';
+    var mitrePill = alert.mitre
+      ? '<a class="siem-mitre" href="https://attack.mitre.org/techniques/' +
+        escHtml(alert.mitre.id.replace(/\./g,'/')) + '/" target="_blank" rel="noopener" ' +
+        'onclick="event.stopPropagation()" ' +
+        'title="' + escHtml(alert.mitre.name + ' - ' + alert.mitre.tactic) + '">' +
+        escHtml(alert.mitre.id) + '</a>'
+      : '';
+    html += '<td><strong>' + escHtml(alert.type) + '</strong>' + occ + mitrePill + '</td>';
     html += '<td>' + ip + '</td>';
     html += '<td>' + ts + '</td>';
     html += '<td>' + ep + '</td>';
@@ -615,14 +765,31 @@ function siemParseQuery(raw) {
   if (!raw || !raw.trim()) return tokens;
 
   // Regex: field:op?value  OR  bare freetext
-  // Supported field aliases
+  // Supported field aliases — extended for Milestones A + B (line parsing
+  // and threat-intel enrichment fields).
   var FIELD_MAP = {
     severity: 'severity', sev: 'severity',
     ip:       'ip',       src: 'ip',
     type:     'type',     attack: 'type',
     score:    'score',    risk: 'score',
     endpoint: 'endpoint', path: 'endpoint', ep: 'endpoint',
+    /* Line-parsed fields */
+    method:   'method',   verb: 'method',
+    status:   'status',   code: 'status', http: 'status',
+    ua:       'ua',       useragent: 'ua', user_agent: 'ua', agent: 'ua',
+    /* Geo / ASN enrichment */
+    country:  'country',
+    cc:       'cc',       countrycode: 'cc', country_code: 'cc',
+    city:     'city',
+    asn:      'asn',
+    org:      'org',
+    provider: 'provider', asnprov: 'provider',
+    kind:     'kind',     asnkind: 'kind',
+    /* Threat intel */
+    mitre:    'mitre',    technique: 'mitre',
+    tag:      'tag',
   };
+  var NUMERIC_FIELDS = { score:1, status:1 };
 
   // Split on whitespace but keep quoted strings together
   var parts = raw.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
@@ -638,7 +805,7 @@ function siemParseQuery(raw) {
       var field = FIELD_MAP[fieldRaw];
       if (field) {
         var op = opRaw;
-        var val = (field === 'score') ? parseFloat(valRaw) : valRaw.toLowerCase();
+        var val = NUMERIC_FIELDS[field] ? parseFloat(valRaw) : valRaw.toLowerCase();
         tokens.push({ field: field, op: op, val: val, raw: part });
         return;
       }
@@ -679,10 +846,34 @@ function siemTokenMatch(alert, token) {
     case 'type':     return contains(alert.type);
     case 'score':    return numOp(alert.risk_score);
     case 'endpoint': return contains(alert.endpoint);
+    /* ── fields populated either by line parsing or by Milestone B enrichment ── */
+    case 'method':   return contains(alert.method);
+    case 'status':   return numOp(alert.status);
+    case 'ua':       return contains(alert.ua);
+    case 'country':  return contains(alert.geo && alert.geo.country);
+    case 'cc':       return contains(alert.geo && alert.geo.cc);
+    case 'city':     return contains(alert.geo && alert.geo.city);
+    case 'asn':      return contains(alert.asn && alert.asn.asn);
+    case 'org':      return contains(alert.asn && alert.asn.org);
+    case 'provider':
+    case 'asnprov':  return contains(alert.asnProv);
+    case 'kind':
+    case 'asnkind':  return contains(alert.asnKind);
+    case 'mitre':    return contains(alert.mitre && alert.mitre.id);
+    case 'tag':
+      if (!alert.tags || !alert.tags.length) return false;
+      return alert.tags.some(function(t){ return String(t).toLowerCase().indexOf(val) !== -1; });
     case 'any':
       return contains(alert.type) || contains(alert.severity) ||
              contains(alert.ip)   || contains(alert.endpoint) ||
-             contains(alert.evidence);
+             contains(alert.evidence) || contains(alert.method) ||
+             contains(alert.status) || contains(alert.ua) ||
+             contains(alert.geo && alert.geo.country) ||
+             contains(alert.geo && alert.geo.cc) ||
+             contains(alert.asn && alert.asn.org) ||
+             contains(alert.asnProv) ||
+             contains(alert.mitre && alert.mitre.id) ||
+             (alert.tags || []).some(function(t){ return String(t).toLowerCase().indexOf(val) !== -1; });
     default: return true;
   }
 }
@@ -777,7 +968,14 @@ function siemRenderAlertsTableFiltered(alerts, total) {
 
     html += '<tr class="siem-row" onclick="siemToggleDetail(' + rowIdx + ')">';
     html += '<td>' + sevBdg + '</td>';
-    html += '<td><strong>' + escHtml(alert.type) + '</strong>' + occ + '</td>';
+    var mitrePill = alert.mitre
+      ? '<a class="siem-mitre" href="https://attack.mitre.org/techniques/' +
+        escHtml(alert.mitre.id.replace(/\./g,'/')) + '/" target="_blank" rel="noopener" ' +
+        'onclick="event.stopPropagation()" ' +
+        'title="' + escHtml(alert.mitre.name + ' - ' + alert.mitre.tactic) + '">' +
+        escHtml(alert.mitre.id) + '</a>'
+      : '';
+    html += '<td><strong>' + escHtml(alert.type) + '</strong>' + occ + mitrePill + '</td>';
     html += '<td>' + ip + '</td>';
     html += '<td>' + ts + '</td>';
     html += '<td>' + ep + '</td>';
@@ -962,6 +1160,8 @@ document.addEventListener('scroll', function() {
 var _LOG_SEARCH = {
   matches:    [],   // line indices of matching lines
   cursor:     -1,   // current highlighted match index
+  tokens:     [],   // parsed KQL tokens for highlighting / re-evaluation
+  queryRaw:   '',   // original query string
 };
 
 /**
@@ -998,6 +1198,202 @@ function siemPositionViewer() {
  * Called on every keystroke in either the log textarea or the search input.
  * Filters the log lines and renders the match viewer.
  */
+/* ─── KQL-style log query parser ──────────────────────────────────────────
+   Supported:
+     bare term          → match anywhere in line     (e.g. Mozilla)
+     "literal phrase"   → exact substring with spaces (e.g. "GET /api")
+     -term              → negation                   (e.g. -sqlmap)
+     field:value        → match value against extracted field (case-insensitive)
+     field:>NUM         → numeric op (>, <, >=, <=, !=, =)
+     Multiple tokens    → AND (all must match)
+
+   Recognised fields (auto-extracted from common formats):
+     ip, method, path, status, size, ua  + any JSON object keys + any K=V pairs
+*/
+/* Convert a glob pattern (`*`, `?`) into a regex source string.
+   Escapes everything else so regex specials inside the pattern stay literal. */
+function siemGlobToRegexSrc(glob) {
+  var src = '';
+  for (var i = 0; i < glob.length; i++) {
+    var c = glob[i];
+    if (c === '*')      src += '.*';
+    else if (c === '?') src += '.';
+    else if (/[.+^${}()|[\]\\]/.test(c)) src += '\\' + c;
+    else                src += c;
+  }
+  return src;
+}
+
+function siemParseLogQuery(raw) {
+  if (!raw || !raw.trim()) return [];
+  var parts = raw.match(/(?:-)?(?:[^\s"]+|"[^"]*")/g) || [];
+  var tokens = [];
+  parts.forEach(function(p) {
+    var negate = p[0] === '-';
+    if (negate) p = p.slice(1);
+
+    var m = p.match(/^(\w+):(.+)$/);
+    if (m) {
+      var field    = m[1].toLowerCase();
+      var stripped = m[2].replace(/^"|"$/g, '');
+
+      /* /regex/flags form — raw regex */
+      var rxM = stripped.match(/^\/(.+)\/([gimsuy]*)$/);
+      if (rxM) {
+        try {
+          var matchRe     = new RegExp(rxM[1], (rxM[2] || '') + (/[i]/.test(rxM[2]||'') ? '' : 'i'));
+          var highlightRe = new RegExp(rxM[1], 'gi');
+          tokens.push({ field: field, op: '~', val: matchRe, highlightRe: highlightRe,
+                        kind: 'regex', negate: negate, raw: p });
+          return;
+        } catch (e) {}
+      }
+
+      /* numeric op */
+      var numM = stripped.match(/^(>=|<=|!=|>|<|=)?(-?\d+(?:\.\d+)?)$/);
+      if (numM) {
+        tokens.push({ field: field, op: numM[1] || '=', val: parseFloat(numM[2]),
+                      kind: 'num', negate: negate, raw: p });
+        return;
+      }
+
+      /* glob with * or ? — anchor for field match, unanchored for highlighting */
+      if (/[*?]/.test(stripped)) {
+        try {
+          var src   = siemGlobToRegexSrc(stripped);
+          var match = new RegExp('^' + src + '$', 'i');
+          var hi    = new RegExp(src, 'gi');
+          tokens.push({ field: field, op: '~', val: match, highlightRe: hi,
+                        kind: 'glob', negate: negate, raw: p });
+          return;
+        } catch (e) {}
+      }
+
+      tokens.push({ field: field, op: ':', val: stripped.toLowerCase(),
+                    kind: 'str', negate: negate, raw: p });
+      return;
+    }
+
+    /* bare term — match anywhere in line */
+    var bare = p.replace(/^"|"$/g, '');
+    if (!bare) return;
+
+    var bareRx = bare.match(/^\/(.+)\/([gimsuy]*)$/);
+    if (bareRx) {
+      try {
+        var matchRe2     = new RegExp(bareRx[1], (bareRx[2] || '') + (/[i]/.test(bareRx[2]||'') ? '' : 'i'));
+        var highlightRe2 = new RegExp(bareRx[1], 'gi');
+        tokens.push({ field: 'any', op: '~', val: matchRe2, highlightRe: highlightRe2,
+                      kind: 'regex', negate: negate, raw: p });
+        return;
+      } catch (e) {}
+    }
+
+    if (/[*?]/.test(bare)) {
+      try {
+        var src2 = siemGlobToRegexSrc(bare);
+        /* Bare globs are unanchored — substring match against whole line */
+        var match2 = new RegExp(src2, 'i');
+        var hi2    = new RegExp(src2, 'gi');
+        tokens.push({ field: 'any', op: '~', val: match2, highlightRe: hi2,
+                      kind: 'glob', negate: negate, raw: p });
+        return;
+      } catch (e) {}
+    }
+
+    tokens.push({ field: 'any', op: ':', val: bare.toLowerCase(),
+                  kind: 'str', negate: negate, raw: p });
+  });
+  return tokens;
+}
+
+/* Best-effort field extraction for a single log line. Handles:
+   - Common Log Format / NCSA / Apache / Nginx access logs
+   - JSON / JSONL (parses object keys)
+   - key=value pairs (logfmt / Splunk-style)
+*/
+function siemExtractLogFields(line) {
+  var f = {};
+  // First IPv4 in line → ip
+  var ip = line.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
+  if (ip) f.ip = ip[1];
+  // HTTP request token: "METHOD /path HTTP/x.y"
+  var rq = line.match(/"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)\s+([^\s"]+)\s+HTTP\/[\d.]+"/i);
+  if (rq) { f.method = rq[1].toUpperCase(); f.path = rq[2]; }
+  // Status code after the request token: ..." 200 1234
+  var st = line.match(/"\s+(\d{3})\s+/);
+  if (st) f.status = st[1];
+  // Response size: "..." 200 1234
+  var sz = line.match(/"\s+\d{3}\s+(\d+|-)/);
+  if (sz && sz[1] !== '-') f.size = sz[1];
+  // User-agent — last quoted string in CLF
+  var ua = line.match(/"([^"]+)"\s*$/);
+  if (ua) f.ua = ua[1].toLowerCase();
+  // logfmt key=value pairs
+  var kv;
+  var kvRe = /(\w+)=(?:"([^"]*)"|(\S+))/g;
+  while ((kv = kvRe.exec(line)) !== null) {
+    var k = kv[1].toLowerCase();
+    if (!f[k]) f[k] = (kv[2] !== undefined ? kv[2] : kv[3]).toLowerCase();
+  }
+  // JSON line — flatten one level
+  var t = line.trim();
+  if (t.charCodeAt(0) === 123 /* { */) {
+    try {
+      var obj = JSON.parse(t);
+      Object.keys(obj).forEach(function(k) {
+        var v = obj[k];
+        if (v == null) return;
+        if (typeof v === 'object') return;
+        var lk = k.toLowerCase();
+        if (f[lk] === undefined) f[lk] = String(v).toLowerCase();
+      });
+    } catch (e) {}
+  }
+  return f;
+}
+
+function siemLineMatches(line, tokens) {
+  var lc = line.toLowerCase();
+  var f  = siemExtractLogFields(line);
+  return tokens.every(function(t) {
+    var ok;
+
+    if (t.kind === 'regex' || t.kind === 'glob') {
+      /* Bare regex/glob → test whole line.
+         Field-scoped → test the extracted field value (or fall back to line). */
+      var hay;
+      if (t.field === 'any') {
+        hay = line;
+      } else if (f[t.field] !== undefined) {
+        hay = String(f[t.field]);
+      } else {
+        hay = line; // field not extractable on this line
+      }
+      ok = t.val.test(hay);
+    } else if (t.field === 'any') {
+      ok = lc.indexOf(t.val) !== -1;
+    } else if (t.kind === 'num') {
+      var fv = f[t.field];
+      var nv = (fv !== undefined) ? parseFloat(fv) : NaN;
+      if (isNaN(nv)) { ok = false; }
+      else switch (t.op) {
+        case '>':  ok = nv >  t.val; break;
+        case '>=': ok = nv >= t.val; break;
+        case '<':  ok = nv <  t.val; break;
+        case '<=': ok = nv <= t.val; break;
+        case '!=': ok = nv !== t.val; break;
+        default:   ok = nv === t.val;
+      }
+    } else {
+      var fv2 = f[t.field];
+      if (fv2 !== undefined) ok = String(fv2).toLowerCase().indexOf(t.val) !== -1;
+      else                   ok = lc.indexOf(t.val) !== -1; // fall back to whole-line
+    }
+    return t.negate ? !ok : ok;
+  });
+}
+
 function siemLogSearchApply() {
   var query = (document.getElementById('siemLogSearchInput') || {}).value || '';
   var raw   = (document.getElementById('siemLogPaste')       || {}).value || '';
@@ -1008,20 +1404,39 @@ function siemLogSearchApply() {
   if (!query.trim()) {
     _LOG_SEARCH.matches = [];
     _LOG_SEARCH.cursor  = -1;
+    _LOG_SEARCH.tokens  = [];
+    _LOG_SEARCH.queryRaw = '';
     if (viewer)  { viewer.style.display = 'none'; viewer.innerHTML = ''; }
-    if (countEl) countEl.textContent = '';
+    if (countEl) { countEl.textContent = ''; countEl.style.color = ''; }
+    siemRenderLogFilterPanel('', [], [], []);
     return;
   }
 
   var lines   = raw.split('\n');
-  var q       = query.toLowerCase();
+  var tokens  = siemParseLogQuery(query);
   var matches = [];
 
+  // No tokens parsed (e.g. just whitespace) → nothing to match
+  if (!tokens.length) {
+    _LOG_SEARCH.matches = [];
+    _LOG_SEARCH.cursor  = -1;
+    _LOG_SEARCH.tokens  = [];
+    _LOG_SEARCH.queryRaw = query;
+    if (viewer)  { viewer.style.display = 'none'; viewer.innerHTML = ''; }
+    if (countEl) { countEl.textContent = '0 matches'; countEl.style.color = 'var(--red)'; }
+    siemRenderLogFilterPanel(query, [], [], []);
+    return;
+  }
+
   lines.forEach(function(line, idx) {
-    if (line.toLowerCase().indexOf(q) !== -1) {
-      matches.push(idx);
-    }
+    if (line && siemLineMatches(line, tokens)) matches.push(idx);
   });
+  _LOG_SEARCH.tokens   = tokens;
+  _LOG_SEARCH.queryRaw = query;
+
+  /* Splunk-style filter panel — visually replaces the textarea while a
+     query is active so the user sees ONLY matching lines. */
+  siemRenderLogFilterPanel(query, lines, matches, tokens);
 
   var prevLen = _LOG_SEARCH.matches.length;
   _LOG_SEARCH.matches = matches;
@@ -1072,13 +1487,132 @@ function siemLogSearchApply() {
   siemScrollTextareaToLine(_LOG_SEARCH.cursor);
 }
 
-/** Highlight all occurrences of term inside a line (returns HTML) */
-function siemHighlightTerm(line, term) {
+/* ─── Splunk-style filtered results panel ───────────────────────────────
+   Lazily injects a `<div id="siemLogFilterPanel">` after the textarea and
+   renders matched lines as clean rows with line numbers, status badges,
+   method tags, and highlighted terms. While a query is active the original
+   textarea is hidden so the user sees ONLY the filtered events.       */
+function siemEnsureFilterPanelStyles() {
+  if (document.getElementById('siemFilterPanelStyles')) return;
+  var s = document.createElement('style');
+  s.id = 'siemFilterPanelStyles';
+  s.textContent =
+    '.siem-log-filter-panel{margin-top:6px;border:1px solid var(--border,#262a36);'+
+    'border-radius:6px;background:var(--surface,#0e1117);max-height:520px;overflow:auto;'+
+    'font-family:var(--mono,ui-monospace,monospace);font-size:12px}' +
+    '.slfp-header{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;'+
+    'align-items:center;padding:6px 10px;background:var(--surface2,#161a23);'+
+    'border-bottom:1px solid var(--border,#262a36);font-size:10px;letter-spacing:.06em}' +
+    '.slfp-count{color:var(--accent,#4dc4ff);font-weight:700}' +
+    '.slfp-query{color:var(--text2,#7d8597);font-style:italic;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+    '.slfp-empty{padding:18px 14px;color:var(--text2,#7d8597);text-align:center;font-style:italic}' +
+    '.slfp-rows{display:flex;flex-direction:column}' +
+    '.slfp-row{display:flex;align-items:flex-start;gap:8px;padding:5px 10px;'+
+    'border-bottom:1px solid rgba(255,255,255,.04);cursor:default;transition:background .1s}' +
+    '.slfp-row:hover{background:rgba(255,255,255,.03)}' +
+    '.slfp-ln{flex:0 0 auto;width:36px;text-align:right;color:var(--text2,#7d8597);'+
+    'font-size:10px;padding-top:1px;user-select:none}' +
+    '.slfp-status{flex:0 0 auto;font-size:10px;font-weight:700;padding:1px 6px;'+
+    'border-radius:3px;border:1px solid;background:rgba(0,0,0,.25)}' +
+    '.slfp-method{flex:0 0 auto;font-size:10px;font-weight:700;padding:1px 6px;'+
+    'border-radius:3px;background:var(--surface2,#161a23);color:var(--text,#d1d5db)}' +
+    '.slfp-text{flex:1 1 auto;color:var(--text,#d1d5db);word-break:break-all;'+
+    'line-height:1.55;white-space:pre-wrap}' +
+    '.slfp-text mark.siem-hl{background:#ffeb3b66;color:inherit;border-radius:2px;padding:0 2px}';
+  document.head.appendChild(s);
+}
+
+function siemRenderLogFilterPanel(query, lines, matches, tokens) {
+  siemEnsureFilterPanelStyles();
+  var ta = document.getElementById('siemLogPaste');
+  if (!ta) return;
+
+  var panel = document.getElementById('siemLogFilterPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'siemLogFilterPanel';
+    panel.className = 'siem-log-filter-panel';
+    if (ta.parentNode) ta.parentNode.insertBefore(panel, ta.nextSibling);
+  }
+
+  /* No active query → restore textarea, hide panel */
+  if (!query || !query.trim()) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    ta.style.display = '';
+    return;
+  }
+
+  /* Active query → hide raw textarea, show filtered panel */
+  ta.style.display = 'none';
+  panel.style.display = 'block';
+
+  var html = '';
+  html += '<div class="slfp-header">';
+  html += '<span class="slfp-count">' + matches.length + ' / ' + lines.length + ' line' + (lines.length === 1 ? '' : 's') + '</span>';
+  html += '<span class="slfp-query" title="' + escHtml(query) + '">' + escHtml(query) + '</span>';
+  html += '</div>';
+
+  if (!matches.length) {
+    html += '<div class="slfp-empty">No log lines match this query.</div>';
+    panel.innerHTML = html;
+    return;
+  }
+
+  html += '<div class="slfp-rows">';
+  matches.forEach(function(idx) {
+    var line = lines[idx] || '';
+    var f = siemExtractLogFields(line);
+    var statusBdg = '';
+    if (f.status) {
+      var s = parseInt(f.status, 10);
+      var col = s >= 500 ? '#ff6b6b' : s >= 400 ? '#ffd166' : s >= 300 ? '#4dc4ff' : '#48d597';
+      statusBdg = '<span class="slfp-status" style="color:' + col + ';border-color:' + col + '66">' + escHtml(f.status) + '</span>';
+    }
+    var methodBdg = f.method ? '<span class="slfp-method">' + escHtml(f.method) + '</span>' : '';
+    html += '<div class="slfp-row">' +
+      '<span class="slfp-ln">' + (idx + 1) + '</span>' +
+      statusBdg + methodBdg +
+      '<span class="slfp-text">' + siemHighlightTerm(line) + '</span>' +
+      '</div>';
+  });
+  html += '</div>';
+
+  panel.innerHTML = html;
+}
+
+/** Highlight every search-token value inside a log line (returns HTML).
+ *  Skips negated tokens (those are exclusions, not highlights) and numeric
+ *  ones (no useful substring to highlight). Handles three kinds:
+ *    - 'str'   → escape value, build literal regex
+ *    - 'glob'  → use the token's pre-built unanchored highlightRe source
+ *    - 'regex' → use the user's regex source verbatim                 */
+function siemHighlightTerm(line, _ignored) {
   var safe = escHtml(line);
-  var safeTerm = escHtml(term);
-  // Case-insensitive replace — use a regex on the safe HTML
-  var re = new RegExp('(' + safeTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-  return safe.replace(re, '<mark class="siem-hl">$1</mark>');
+  var tokens = (_LOG_SEARCH.tokens || []).filter(function(t) {
+    return !t.negate && t.kind !== 'num';
+  });
+  if (!tokens.length) return safe;
+
+  var sources = [];
+  tokens.forEach(function(t) {
+    if (t.kind === 'glob' || t.kind === 'regex') {
+      if (t.highlightRe && t.highlightRe.source) sources.push(t.highlightRe.source);
+    } else if (t.val) {
+      var s = String(t.val);
+      sources.push(escHtml(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    }
+  });
+  if (!sources.length) return safe;
+
+  /* Longest first reduces fragmented overlapping highlights */
+  sources.sort(function(a, b) { return b.length - a.length; });
+  try {
+    var re = new RegExp('(' + sources.join('|') + ')', 'gi');
+    return safe.replace(re, '<mark class="siem-hl">$1</mark>');
+  } catch (e) {
+    return safe;
+  }
 }
 
 /** Navigate matches with keyboard (Enter / arrow keys inside search input) */
@@ -1102,33 +1636,38 @@ function siemLogMatchClick(mi) {
   siemLogSearchApply();
 }
 
-/** Scroll the textarea to the given match cursor position */
+/** Scroll the textarea to the given match cursor position.
+ *  CRITICAL: does NOT call ta.focus() or setSelectionRange — those steal
+ *  focus from the search input on every keystroke, causing each typed
+ *  character after the first to land in the textarea (with a line
+ *  selected, so it replaces a log line). Pure scroll only. */
 function siemScrollTextareaToLine(matchCursor) {
   var ta = document.getElementById('siemLogPaste');
   if (!ta || _LOG_SEARCH.matches.length === 0 || matchCursor < 0) return;
   var lineIdx = _LOG_SEARCH.matches[matchCursor];
-  var lines   = ta.value.split('\n');
-  // Compute character offset of this line
-  var offset = lines.slice(0, lineIdx).reduce(function(sum, l) { return sum + l.length + 1; }, 0);
-  // Set selection to force scroll
-  ta.focus();
-  ta.setSelectionRange(offset, offset + (lines[lineIdx] || '').length);
-  // Estimate scroll position
-  var lineHeight = 16; // approx px
-  var visHeight  = ta.clientHeight;
-  ta.scrollTop   = Math.max(0, lineIdx * lineHeight - visHeight / 2);
+  // Measure actual line height from computed font metrics so we don't drift
+  // when the user changes themes / font sizes.
+  var cs = window.getComputedStyle(ta);
+  var lh = parseFloat(cs.lineHeight);
+  if (!lh || isNaN(lh)) lh = parseFloat(cs.fontSize) * 1.4 || 16;
+  var visHeight = ta.clientHeight;
+  ta.scrollTop  = Math.max(0, lineIdx * lh - visHeight / 2);
 }
 
 /** Clear the raw log search */
 function siemLogSearchClear() {
   var input = document.getElementById('siemLogSearchInput');
   if (input) input.value = '';
-  _LOG_SEARCH.matches = [];
-  _LOG_SEARCH.cursor  = -1;
+  _LOG_SEARCH.matches  = [];
+  _LOG_SEARCH.cursor   = -1;
+  _LOG_SEARCH.tokens   = [];
+  _LOG_SEARCH.queryRaw = '';
   var viewer  = document.getElementById('siemLogMatchViewer');
   var countEl = document.getElementById('siemLogSearchCount');
   if (viewer)  { viewer.style.display = 'none'; viewer.innerHTML = ''; }
-  if (countEl) countEl.textContent = '';
+  if (countEl) { countEl.textContent = ''; countEl.style.color = ''; }
+  /* Restore textarea + hide the filtered panel */
+  siemRenderLogFilterPanel('', [], [], []);
 }
 
 /* Close the viewer when clicking outside */
@@ -1612,3 +2151,1017 @@ function siemForwardTest() {
       if (statusEl) { statusEl.textContent = '✗ Cannot reach backend — check if siem_backend.py is running'; statusEl.className = 'siem-fwd-status error'; }
     });
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Milestone A additions: Top-N widgets, time histogram, time-range filter,
+   click-to-filter, saved searches. All injected here so they sit below the
+   functions they depend on. CSS is injected once via siemEnsureMilestoneAStyles.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function siemEnsureMilestoneAStyles() {
+  if (document.getElementById('siemMilestoneAStyles')) return;
+  var s = document.createElement('style');
+  s.id = 'siemMilestoneAStyles';
+  s.textContent = [
+    /* Histogram */
+    '.siem-histo-wrap{margin:8px 0 14px;padding:10px 14px;background:var(--surface,#0e1117);' +
+      'border:1px solid var(--border,#262a36);border-radius:6px}',
+    '.siem-histo-head{display:flex;justify-content:space-between;align-items:center;' +
+      'font-size:10px;letter-spacing:.06em;color:var(--text2,#7d8597);margin-bottom:6px}',
+    '.siem-histo-head strong{color:var(--text,#d1d5db);font-weight:700}',
+    '.siem-histo-svg{width:100%;height:80px;display:block}',
+    '.siem-histo-bar{cursor:pointer;transition:opacity .1s}',
+    '.siem-histo-bar:hover{opacity:.7}',
+    '.siem-histo-bar.active{stroke:var(--accent,#4dc4ff);stroke-width:2}',
+    '.siem-histo-axis{font-size:9px;fill:var(--text2,#7d8597);font-family:var(--mono,monospace)}',
+    /* Time-range chips */
+    '.siem-tr-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}',
+    '.siem-tr-label{font-size:10px;letter-spacing:.06em;color:var(--text2,#7d8597);margin-right:4px}',
+    '.siem-tr-btn{padding:3px 10px;font-size:11px;border:1px solid var(--border,#262a36);' +
+      'background:transparent;color:var(--text2,#7d8597);border-radius:4px;cursor:pointer;' +
+      'font-family:var(--mono,monospace);transition:all .12s}',
+    '.siem-tr-btn:hover{background:var(--surface2,#161a23);color:var(--text,#d1d5db)}',
+    '.siem-tr-btn.active{border-color:var(--accent,#4dc4ff);color:var(--accent,#4dc4ff);' +
+      'background:rgba(77,196,255,.08)}',
+    /* Top-N widgets */
+    '.siem-topn-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));' +
+      'gap:10px;margin:10px 0 14px}',
+    '.siem-topn-card{background:var(--surface,#0e1117);border:1px solid var(--border,#262a36);' +
+      'border-radius:6px;padding:8px 10px}',
+    '.siem-topn-title{font-size:9px;letter-spacing:.08em;color:var(--text2,#7d8597);' +
+      'font-weight:700;margin-bottom:6px;font-family:var(--mono,monospace)}',
+    '.siem-topn-rows{display:flex;flex-direction:column;gap:2px}',
+    '.siem-topn-row{display:flex;align-items:center;gap:8px;padding:3px 6px;' +
+      'background:transparent;border:none;border-radius:3px;cursor:pointer;' +
+      'text-align:left;color:var(--text,#d1d5db);font-size:11px;width:100%;' +
+      'position:relative;transition:background .1s;overflow:hidden}',
+    '.siem-topn-row:hover{background:rgba(77,196,255,.08)}',
+    '.siem-topn-bar{position:absolute;left:0;top:0;bottom:0;background:rgba(77,196,255,.12);' +
+      'border-right:1px solid rgba(77,196,255,.25);z-index:0;pointer-events:none}',
+    '.siem-topn-val,.siem-topn-count{position:relative;z-index:1}',
+    '.siem-topn-val{flex:1 1 auto;font-family:var(--mono,monospace);' +
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.siem-topn-count{flex:0 0 auto;color:var(--text2,#7d8597);font-weight:700;font-size:10px}',
+    '.siem-topn-empty{color:var(--text2,#7d8597);font-size:10px;font-style:italic;padding:4px 6px}',
+    /* MITRE pill */
+    '.siem-mitre{display:inline-block;margin-left:8px;padding:1px 6px;font-size:9px;' +
+      'font-weight:700;font-family:var(--mono,monospace);letter-spacing:.04em;' +
+      'background:rgba(157,123,255,.12);color:#9d7bff;border:1px solid rgba(157,123,255,.3);' +
+      'border-radius:3px;text-decoration:none;cursor:pointer;vertical-align:middle}',
+    '.siem-mitre:hover{background:rgba(157,123,255,.22);text-decoration:none}',
+    /* Saved searches */
+    '.siem-saved-wrap{position:relative;display:inline-block}',
+    '.siem-saved-btn{padding:4px 10px;font-size:11px;border:1px solid var(--border,#262a36);' +
+      'background:var(--surface,#0e1117);color:var(--text2,#7d8597);border-radius:4px;' +
+      'cursor:pointer;font-family:var(--mono,monospace)}',
+    '.siem-saved-btn:hover{color:var(--accent,#4dc4ff);border-color:var(--accent,#4dc4ff)}',
+    '.siem-saved-dropdown{position:absolute;right:0;top:calc(100% + 4px);min-width:280px;' +
+      'max-height:340px;overflow-y:auto;background:var(--surface,#0e1117);' +
+      'border:1px solid var(--border,#262a36);border-radius:6px;z-index:100;' +
+      'box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px}',
+    '.siem-saved-add{display:block;width:100%;padding:8px;font-size:11px;' +
+      'background:rgba(77,196,255,.08);color:var(--accent,#4dc4ff);' +
+      'border:1px dashed rgba(77,196,255,.35);border-radius:4px;cursor:pointer;' +
+      'margin-bottom:6px;font-family:var(--mono,monospace)}',
+    '.siem-saved-add:hover{background:rgba(77,196,255,.15)}',
+    '.siem-saved-row{display:flex;align-items:center;gap:6px;padding:5px 8px;' +
+      'border-radius:3px;cursor:pointer;font-size:11px}',
+    '.siem-saved-row:hover{background:var(--surface2,#161a23)}',
+    '.siem-saved-name{flex:1 1 auto;color:var(--text,#d1d5db);font-weight:600;' +
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.siem-saved-q{font-family:var(--mono,monospace);font-size:9px;color:var(--text2,#7d8597);' +
+      'margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.siem-saved-del{padding:2px 6px;background:transparent;color:var(--text2,#7d8597);' +
+      'border:none;cursor:pointer;font-size:14px;border-radius:3px}',
+    '.siem-saved-del:hover{color:var(--red);background:rgba(255,107,107,.1)}',
+    '.siem-saved-empty{padding:14px;font-size:10px;color:var(--text2,#7d8597);' +
+      'text-align:center;font-style:italic}',
+    /* Filterable values in alerts table */
+    '.siem-filterable{cursor:pointer;text-decoration:underline dotted transparent;' +
+      'transition:text-decoration-color .12s}',
+    '.siem-filterable:hover{text-decoration-color:var(--accent,#4dc4ff);color:var(--accent,#4dc4ff)}',
+  ].join('\n');
+  document.head.appendChild(s);
+}
+
+/* ─── §1.1 Time histogram ───────────────────────────────────────────────── */
+function siemEnsureHistoMount() {
+  siemEnsureMilestoneAStyles();
+  var existing = document.getElementById('siemHistoWrap');
+  if (existing) return existing;
+  var anchor = document.getElementById('siemSevCounters');
+  if (!anchor || !anchor.parentNode) return null;
+  var wrap = document.createElement('div');
+  wrap.id = 'siemHistoWrap';
+  wrap.className = 'siem-histo-wrap';
+  wrap.style.display = 'none';
+  anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
+  return wrap;
+}
+
+function siemRenderTimelineHisto(alerts) {
+  var wrap = siemEnsureHistoMount();
+  if (!wrap) return;
+  var stamps = alerts.map(function(a){ return Date.parse(a.timestamp); })
+                     .filter(function(t){ return !isNaN(t); });
+  if (!stamps.length) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+    return;
+  }
+  var minT = Math.min.apply(null, stamps);
+  var maxT = Math.max.apply(null, stamps);
+  if (minT === maxT) maxT = minT + 60_000;
+  var range = maxT - minT;
+  var bucketMs = siemPickBucketMs(range);
+  var bucketCount = Math.max(1, Math.ceil(range / bucketMs) + 1);
+  var buckets = [];
+  for (var i=0;i<bucketCount;i++) {
+    buckets.push({ idx:i, start: minT + i*bucketMs, count:0,
+                   sev:{CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0,INFO:0} });
+  }
+  alerts.forEach(function(a){
+    var t = Date.parse(a.timestamp);
+    if (isNaN(t)) return;
+    var idx = Math.floor((t - minT) / bucketMs);
+    if (idx < 0 || idx >= bucketCount) return;
+    a.bucketIdx = idx;
+    buckets[idx].count++;
+    buckets[idx].sev[a.severity] = (buckets[idx].sev[a.severity]||0) + 1;
+  });
+  var maxCount = buckets.reduce(function(m,b){ return Math.max(m,b.count); }, 1);
+
+  /* SVG render */
+  var W = 1000, H = 80, padL = 4, padR = 4, padT = 4, padB = 14;
+  var availW = W - padL - padR;
+  var availH = H - padT - padB;
+  var bw = availW / bucketCount;
+  var bars = '';
+  buckets.forEach(function(b){
+    if (b.count === 0) return;
+    var x = padL + b.idx * bw;
+    var totalH = (b.count / maxCount) * availH;
+    var y = padT + availH - totalH;
+    var sevOrder = ['INFO','LOW','MEDIUM','HIGH','CRITICAL'];
+    var sevColors = { CRITICAL:'#ff6b6b', HIGH:'#ff9466', MEDIUM:'#ffd166', LOW:'#48d597', INFO:'#4dd0e1' };
+    var cy = y;
+    var stacked = '';
+    sevOrder.forEach(function(s){
+      var c = b.sev[s] || 0;
+      if (c === 0) return;
+      var h = (c / b.count) * totalH;
+      stacked += '<rect x="'+x+'" y="'+cy+'" width="'+(bw-1).toFixed(2)+'" height="'+h.toFixed(2)+
+        '" fill="'+sevColors[s]+'" opacity=".85"/>';
+      cy += h;
+    });
+    var active = (SIEM_TIMERANGE.active && SIEM_TIMERANGE.startMs === b.start) ? ' active' : '';
+    var ttl = siemFmtBucket(b.start, bucketMs) + ' (+' + Math.round(bucketMs/60000) + 'm) — ' + b.count + ' alerts';
+    bars += '<g class="siem-histo-bar'+active+'" data-idx="'+b.idx+'" '+
+            'data-start="'+b.start+'" data-end="'+(b.start+bucketMs)+'" '+
+            'onclick="siemHistoClick('+b.idx+','+b.start+','+(b.start+bucketMs)+')">' +
+            '<title>'+escHtml(ttl)+'</title>' +
+            stacked + '</g>';
+  });
+
+  var startLbl = siemFmtBucket(minT, bucketMs);
+  var endLbl   = siemFmtBucket(maxT, bucketMs);
+  var bucketLbl = bucketMs >= 24*3.6e6 ? (Math.round(bucketMs/(24*3.6e6))+'d') :
+                  bucketMs >= 3.6e6    ? (Math.round(bucketMs/3.6e6)+'h') :
+                                         (Math.round(bucketMs/60000)+'m');
+
+  wrap.style.display = 'block';
+  wrap.innerHTML =
+    '<div class="siem-histo-head">' +
+      '<span><strong>EVENT TIMELINE</strong> — ' + buckets.filter(function(b){return b.count;}).length +
+        ' active buckets · ' + bucketLbl + ' each · click to filter</span>' +
+      '<span>' + escHtml(startLbl) + ' → ' + escHtml(endLbl) + '</span>' +
+    '</div>' +
+    '<svg class="siem-histo-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+      bars +
+    '</svg>';
+}
+
+function siemHistoClick(idx, startMs, endMs) {
+  SIEM_TIMERANGE.active  = true;
+  SIEM_TIMERANGE.preset  = 'custom';
+  SIEM_TIMERANGE.startMs = startMs;
+  SIEM_TIMERANGE.endMs   = endMs;
+  siemSyncTimeRangeUI();
+  if (typeof siemRefreshAlertsView === 'function') siemRefreshAlertsView();
+  // Re-render histogram so the active bar shows the highlight
+  if (SIEM.lastResult && SIEM.lastResult.alerts) siemRenderTimelineHisto(SIEM.lastResult.alerts);
+}
+
+/* ─── §1.4 Time-range filter ────────────────────────────────────────────── */
+var TIME_PRESETS = [
+  { id:'5m',  label:'5m',  ms: 5*60_000 },
+  { id:'15m', label:'15m', ms: 15*60_000 },
+  { id:'1h',  label:'1h',  ms: 60*60_000 },
+  { id:'6h',  label:'6h',  ms: 6*60*60_000 },
+  { id:'24h', label:'24h', ms: 24*60*60_000 },
+  { id:'7d',  label:'7d',  ms: 7*24*60*60_000 },
+  { id:'all', label:'All', ms: null }
+];
+
+function siemEnsureTimeRangeMount() {
+  siemEnsureMilestoneAStyles();
+  var existing = document.getElementById('siemTimeRangeRow');
+  if (existing) return existing;
+  var anchor = siemEnsureHistoMount();
+  if (!anchor) return null;
+  var row = document.createElement('div');
+  row.id = 'siemTimeRangeRow';
+  row.className = 'siem-tr-row';
+  row.innerHTML = '<span class="siem-tr-label">RANGE:</span>' +
+    TIME_PRESETS.map(function(p){
+      return '<button class="siem-tr-btn'+(p.id==='all'?' active':'')+'" '+
+             'data-preset="'+p.id+'" onclick="siemSetTimeRangePreset(\''+p.id+'\')">'+p.label+'</button>';
+    }).join('');
+  anchor.parentNode.insertBefore(row, anchor);
+  return row;
+}
+
+function siemSetTimeRangePreset(presetId) {
+  var preset = TIME_PRESETS.filter(function(p){ return p.id === presetId; })[0];
+  if (!preset) return;
+  if (preset.id === 'all') {
+    SIEM_TIMERANGE.active = false;
+    SIEM_TIMERANGE.preset = 'all';
+    SIEM_TIMERANGE.startMs = SIEM_TIMERANGE.endMs = null;
+  } else {
+    SIEM_TIMERANGE.active = true;
+    SIEM_TIMERANGE.preset = preset.id;
+    SIEM_TIMERANGE.endMs   = Date.now();
+    SIEM_TIMERANGE.startMs = SIEM_TIMERANGE.endMs - preset.ms;
+    /* If alerts exist, anchor "now" to the latest alert timestamp instead of
+       wall-clock — most pasted log files are historical. */
+    if (SIEM.lastResult && SIEM.lastResult.alerts) {
+      var stamps = SIEM.lastResult.alerts
+        .map(function(a){ return Date.parse(a.timestamp); })
+        .filter(function(t){ return !isNaN(t); });
+      if (stamps.length) {
+        var latest = Math.max.apply(null, stamps);
+        SIEM_TIMERANGE.endMs   = latest;
+        SIEM_TIMERANGE.startMs = latest - preset.ms;
+      }
+    }
+  }
+  siemSyncTimeRangeUI();
+  if (typeof siemRefreshAlertsView === 'function') siemRefreshAlertsView();
+  if (SIEM.lastResult && SIEM.lastResult.alerts) siemRenderTimelineHisto(SIEM.lastResult.alerts);
+}
+
+function siemSyncTimeRangeUI() {
+  var row = document.getElementById('siemTimeRangeRow');
+  if (!row) return;
+  row.querySelectorAll('.siem-tr-btn').forEach(function(btn){
+    var p = btn.dataset.preset;
+    btn.classList.toggle('active', SIEM_TIMERANGE.preset === p);
+  });
+}
+
+/* ─── §1.2 Top-N analytics widgets ──────────────────────────────────────── */
+function siemEnsureTopNMount() {
+  siemEnsureMilestoneAStyles();
+  var existing = document.getElementById('siemTopNGrid');
+  if (existing) return existing;
+  var anchor = document.getElementById('siemSevCounters');
+  if (!anchor || !anchor.parentNode) return null;
+  var grid = document.createElement('div');
+  grid.id = 'siemTopNGrid';
+  grid.className = 'siem-topn-grid';
+  grid.style.display = 'none';
+  /* Insert AFTER the histogram so order is: severity → histogram → range → top-N */
+  var histo = document.getElementById('siemHistoWrap');
+  var ref = histo ? histo.nextSibling : anchor.nextSibling;
+  anchor.parentNode.insertBefore(grid, ref);
+  return grid;
+}
+
+var TOPN_WIDGETS = [
+  { title:'TOP SOURCE IPs',   field:'ip',       getter:function(a){return a.ip;} },
+  { title:'TOP ENDPOINTS',    field:'endpoint', getter:function(a){return a.endpoint;} },
+  { title:'TOP ATTACK TYPES', field:'type',     getter:function(a){return a.type;} },
+  { title:'TOP STATUS CODES', field:'status',   getter:function(a){return a.status;} },
+  { title:'TOP USER-AGENTS',  field:'ua',       getter:function(a){return a.ua && a.ua.slice(0,40);} },
+  { title:'TOP METHODS',      field:'method',   getter:function(a){return a.method;} },
+  /* These two stay empty until Milestone B enrichment populates geo / ASN. */
+  { title:'TOP COUNTRIES',    field:'country',  getter:function(a){return a.geo && a.geo.country;}, hideEmpty:true },
+  { title:'TOP ASN / PROVIDER', field:'provider', getter:function(a){return a.asnProv && a.asnProv !== 'unknown' ? a.asnProv : null;}, hideEmpty:true },
+];
+
+function siemRenderTopN(alerts) {
+  var grid = siemEnsureTopNMount();
+  if (!grid) return;
+  if (!alerts || !alerts.length) {
+    grid.style.display = 'none';
+    grid.innerHTML = '';
+    return;
+  }
+  grid.style.display = 'grid';
+  var html = '';
+  TOPN_WIDGETS.forEach(function(w){
+    var rows = siemTopN(alerts, w.getter, 7);
+    /* Skip widgets that are hideEmpty + no data (don't waste grid space) */
+    if (w.hideEmpty && !rows.length) return;
+    var max = rows.length ? rows[0][1] : 1;
+    html += '<div class="siem-topn-card"><div class="siem-topn-title">' + escHtml(w.title) + '</div>';
+    html += '<div class="siem-topn-rows">';
+    if (!rows.length) {
+      html += '<div class="siem-topn-empty">no data</div>';
+    } else {
+      rows.forEach(function(r){
+        var pct = (r[1] / max) * 100;
+        var valStr = String(r[0]);
+        /* Use data attributes + .siem-filterable class so the delegated
+           click handler picks it up. Inline onclick with JSON.stringify
+           breaks for any value containing a double-quote (and HTML attribute
+           parsing terminates on the first " inside the JSON-quoted value
+           — i.e. EVERY string value, since JSON.stringify always wraps). */
+        html += '<button class="siem-topn-row siem-filterable" '+
+          'data-field="'+escHtml(w.field)+'" data-val="'+escHtml(valStr)+'" '+
+          'title="Click to filter — '+escHtml(w.field)+':'+escHtml(valStr)+'">' +
+          '<span class="siem-topn-bar" style="width:'+pct.toFixed(1)+'%"></span>' +
+          '<span class="siem-topn-val">' + escHtml(valStr) + '</span>' +
+          '<span class="siem-topn-count">'+r[1]+'</span>' +
+          '</button>';
+      });
+    }
+    html += '</div></div>';
+  });
+  grid.innerHTML = html;
+}
+
+/* ─── §4.1 Saved searches ───────────────────────────────────────────────── */
+function siemSavedSearches() {
+  try {
+    var v = JSON.parse(localStorage.getItem('sp_siem_saved_searches') || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch (e) { return []; }
+}
+function siemSaveSearch(name, query) {
+  if (!name || !query) return;
+  var arr = siemSavedSearches().filter(function(s){ return s.name !== name; });
+  arr.unshift({ name:name, query:query, when:Date.now() });
+  localStorage.setItem('sp_siem_saved_searches', JSON.stringify(arr.slice(0,50)));
+  siemRenderSavedDropdown();
+}
+function siemDeleteSearch(name) {
+  var arr = siemSavedSearches().filter(function(s){ return s.name !== name; });
+  localStorage.setItem('sp_siem_saved_searches', JSON.stringify(arr));
+  siemRenderSavedDropdown();
+}
+function siemApplySaved(name) {
+  var s = siemSavedSearches().filter(function(x){ return x.name === name; })[0];
+  if (!s) return;
+  var input = document.getElementById('siemSearchInput');
+  if (input) input.value = s.query;
+  if (typeof siemApplySearch === 'function') siemApplySearch();
+  siemSavedToggle(false);
+}
+function siemSavedAddCurrent() {
+  var input = document.getElementById('siemSearchInput');
+  var q = (input && input.value || '').trim();
+  if (!q) { showToast && showToast('Enter a query first.', 'warn'); return; }
+  var name = prompt('Name this search:', q.slice(0,40));
+  if (!name) return;
+  siemSaveSearch(name.trim(), q);
+  showToast && showToast('Saved: ' + name, 'success');
+}
+function siemSavedToggle(force) {
+  var dd = document.getElementById('siemSavedDropdown');
+  if (!dd) return;
+  var open = (force === undefined) ? (dd.style.display === 'none') : !!force;
+  dd.style.display = open ? 'block' : 'none';
+  if (open) siemRenderSavedDropdown();
+}
+function siemRenderSavedDropdown() {
+  var list = document.getElementById('siemSavedList');
+  if (!list) return;
+  var arr = siemSavedSearches();
+  if (!arr.length) {
+    list.innerHTML = '<div class="siem-saved-empty">No saved searches yet. Save your current query above.</div>';
+    return;
+  }
+  /* data-saved-name is read by the delegated handler below. Using a data
+     attribute (with escHtml) avoids the inline-onclick + JSON.stringify
+     bug where names containing " or ' broke HTML parsing of the attribute. */
+  list.innerHTML = arr.map(function(s){
+    var nameEsc  = escHtml(s.name);
+    var queryEsc = escHtml(s.query);
+    return '<div class="siem-saved-row" data-saved-apply="'+nameEsc+'">' +
+           '<div style="flex:1;min-width:0">' +
+             '<div class="siem-saved-name">'+nameEsc+'</div>' +
+             '<div class="siem-saved-q">'+queryEsc+'</div>' +
+           '</div>' +
+           '<button class="siem-saved-del" title="Delete" data-saved-del="'+nameEsc+'">×</button>' +
+           '</div>';
+  }).join('');
+}
+
+/* Delegated click handler for saved-search rows (set up once). */
+(function(){
+  if (window._siemSavedSearchDelegated) return;
+  window._siemSavedSearchDelegated = true;
+  document.addEventListener('click', function(e){
+    var del = e.target.closest && e.target.closest('[data-saved-del]');
+    if (del) {
+      e.stopPropagation();
+      siemDeleteSearch(del.getAttribute('data-saved-del'));
+      return;
+    }
+    var apply = e.target.closest && e.target.closest('[data-saved-apply]');
+    if (apply) {
+      e.stopPropagation();
+      siemApplySaved(apply.getAttribute('data-saved-apply'));
+    }
+  }, true);
+})();
+
+function siemEnsureSavedSearchUI() {
+  siemEnsureMilestoneAStyles();
+  if (document.getElementById('siemSavedWrap')) return;
+  var input = document.getElementById('siemSearchInput');
+  if (!input) return;
+  var bar = input.parentNode;
+  if (!bar) return;
+  var wrap = document.createElement('span');
+  wrap.id = 'siemSavedWrap';
+  wrap.className = 'siem-saved-wrap';
+  wrap.innerHTML =
+    '<button class="siem-saved-btn" onclick="siemSavedToggle()" title="Saved searches">★ Saved</button>' +
+    '<div id="siemSavedDropdown" class="siem-saved-dropdown" style="display:none">' +
+      '<button class="siem-saved-add" onclick="siemSavedAddCurrent()">+ Save current query</button>' +
+      '<div id="siemSavedList"></div>' +
+    '</div>';
+  bar.appendChild(wrap);
+  /* Close dropdown when clicking outside it */
+  document.addEventListener('click', function(e){
+    var dd = document.getElementById('siemSavedDropdown');
+    var w  = document.getElementById('siemSavedWrap');
+    if (!dd || !w || dd.style.display === 'none') return;
+    if (!w.contains(e.target)) dd.style.display = 'none';
+  });
+}
+
+/* ─── §4.2 Click-to-filter delegation ────────────────────────────────────── */
+document.addEventListener('click', function(e){
+  var t = e.target.closest && e.target.closest('.siem-filterable');
+  if (!t) return;
+  e.stopPropagation();
+  e.preventDefault();
+  var f = t.getAttribute('data-field');
+  var v = t.getAttribute('data-val');
+  if (f && v) siemAppendKqlToken(f, v);
+}, true);
+
+/* ─── Time-range hooked into siemFilterAlerts (§1.4) ──────────────────────
+   We can't easily edit the existing filter without risk, so we monkey-patch
+   it once: wrap the original implementation and AND-in the time predicate. */
+(function(){
+  if (typeof siemFilterAlerts !== 'function' || siemFilterAlerts._tr_wrapped) return;
+  var _orig = siemFilterAlerts;
+  siemFilterAlerts = function(alerts) {
+    var passed = _orig(alerts);
+    if (SIEM_TIMERANGE.active && SIEM_TIMERANGE.startMs != null && SIEM_TIMERANGE.endMs != null) {
+      passed = passed.filter(function(a){
+        var t = Date.parse(a.timestamp);
+        return !isNaN(t) && t >= SIEM_TIMERANGE.startMs && t < SIEM_TIMERANGE.endMs;
+      });
+    }
+    return passed;
+  };
+  siemFilterAlerts._tr_wrapped = true;
+})();
+
+/* ─── Keep Top-N + histogram in sync with the filtered set (§1.2) ──────────
+   Wrap siemRefreshAlertsView so widgets always reflect the current filter. */
+(function(){
+  if (typeof siemRefreshAlertsView !== 'function' || siemRefreshAlertsView._tr_wrapped) return;
+  var _orig = siemRefreshAlertsView;
+  siemRefreshAlertsView = function(){
+    _orig.apply(this, arguments);
+    var cache = (typeof siemRenderAlertsTable !== 'undefined' &&
+                 siemRenderAlertsTable._cache) ? siemRenderAlertsTable._cache : [];
+    var filtered = (typeof siemFilterAlerts === 'function') ? siemFilterAlerts(cache) : cache;
+    siemRenderTopN(filtered);
+  };
+  siemRefreshAlertsView._tr_wrapped = true;
+})();
+
+/* ─── Initial UI scaffolding when the SIEM view first loads ──────────────── */
+(function siemMilestoneAInit(){
+  function ready() {
+    if (!document.getElementById('view-siem')) {
+      setTimeout(ready, 200);
+      return;
+    }
+    siemEnsureMilestoneAStyles();
+    siemEnsureHistoMount();
+    siemEnsureTimeRangeMount();
+    siemEnsureTopNMount();
+    siemEnsureSavedSearchUI();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ready);
+  } else {
+    ready();
+  }
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MILESTONE B — Threat-intel enrichment (§3.1, §3.2, §3.3 + §1.3 phase A)
+
+   All enrichment runs AFTER the first paint of an analysis result. The
+   alert objects are mutated in place so widgets/tables that re-read them
+   immediately see new fields. Progress is reported via a small status
+   strip near the alerts table title; nothing blocks UI input.
+
+   Persistence (see SIEM_ROADMAP §0.6):
+     sp_siem_threatintel_cache   IP rep cache, 24h TTL
+     sp_siem_tor_exits           Tor exit list snapshot, 1h TTL
+
+   Concurrency caps live on top of the file (BSPEC) so they're tunable
+   without hunting through the body.
+═══════════════════════════════════════════════════════════════════════════ */
+
+var BSPEC = {
+  ENRICH_MAX_DISTINCT_IPS:   200,        // skip auto-enrich beyond this
+  GEO_CONCURRENCY:           5,
+  REP_CONCURRENCY:           4,
+  REP_TTL_MS:                24 * 3_600_000,
+  TOR_TTL_MS:                3_600_000,
+  TOR_LIST_URL:              'https://check.torproject.org/torbulkexitlist',
+};
+
+/* ─── private/loopback IP guard (don't waste API quota on RFC1918) ──────── */
+function siemIsPrivateOrInvalidIp(ip) {
+  if (!ip) return true;
+  if (typeof isPrivate === 'function') return isPrivate(ip);
+  /* Fallback if network.js isPrivate is somehow unavailable */
+  return /^(?:10\.|127\.|0\.0\.0\.0|169\.254\.|192\.168\.)/.test(ip)
+      || /^172\.(?:1[6-9]|2\d|3[01])\./.test(ip)
+      || /^(?:255\.|22[4-9]\.|2[3-5]\d\.)/.test(ip);
+}
+
+/* ─── a tiny worker-pool helper used by all three enrichment passes ─────── */
+async function _siemPool(items, n, fn) {
+  if (!items.length) return;
+  var queue = items.slice();
+  async function worker() {
+    while (queue.length) {
+      var it = queue.shift();
+      try { await fn(it); } catch (e) { /* swallow per-item failures */ }
+    }
+  }
+  var workers = [];
+  for (var i = 0; i < Math.min(n, queue.length); i++) workers.push(worker());
+  await Promise.all(workers);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   §3.3 ASN / hosting classification + Geo
+   Populates: a.geo, a.asn, a.asnKind, a.asnProv
+   Also adds 'asn:<provider>' to a.tags
+───────────────────────────────────────────────────────────────────────── */
+async function siemEnrichAsn(alerts, runId, opts) {
+  if (!alerts || !alerts.length) return;
+  if (typeof ipGeo !== 'function') return;          // network.js not loaded
+
+  var byIp = {};
+  alerts.forEach(function(a) {
+    if (a.ip && !siemIsPrivateOrInvalidIp(a.ip)) {
+      (byIp[a.ip] = byIp[a.ip] || []).push(a);
+    }
+  });
+  var distinct = Object.keys(byIp);
+  if (!distinct.length) return;
+
+  var done = 0;
+  await _siemPool(distinct, BSPEC.GEO_CONCURRENCY, async function(ip) {
+    if (runId !== _SIEM_ENRICH_RUN) return;          // user started new run
+    var g = await ipGeo(ip);
+    if (!g) { done++; siemEnrichProgress('asn', done, distinct.length); return; }
+
+    var R = { geo: g };
+    var c = (typeof classifyTarget === 'function')
+      ? classifyTarget(ip, R)
+      : { kind:'normal', provider:'unknown' };
+
+    byIp[ip].forEach(function(a) {
+      a.geo = {
+        country: g.country || null,
+        cc:      g.countryCode || null,
+        city:    g.city || null,
+      };
+      if (g.asn || g.org) a.asn = { asn: g.asn || null, org: g.org || null };
+      a.asnKind = c.kind;
+      a.asnProv = c.provider;
+      if (c.kind && c.kind !== 'normal' && c.provider && c.provider !== 'unknown') {
+        (a.tags = a.tags || []).push('asn:' + String(c.provider).toLowerCase());
+      }
+      if (g.isAnycast) (a.tags = a.tags || []).push('anycast');
+    });
+    done++;
+    siemEnrichProgress('asn', done, distinct.length);
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   §3.2 Tor exit-node detection
+───────────────────────────────────────────────────────────────────────── */
+async function siemLoadTorExits() {
+  try {
+    var raw = localStorage.getItem('sp_siem_tor_exits');
+    var c = raw ? JSON.parse(raw) : null;
+    if (c && c.when && (Date.now() - c.when) < BSPEC.TOR_TTL_MS && Array.isArray(c.set)) {
+      return new Set(c.set);
+    }
+  } catch (e) {}
+  try {
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var to = ctrl ? setTimeout(function(){ ctrl.abort(); }, 8000) : null;
+    var r = await fetch(BSPEC.TOR_LIST_URL, ctrl ? { signal: ctrl.signal } : {});
+    if (to) clearTimeout(to);
+    if (!r.ok) return new Set();
+    var txt = await r.text();
+    var arr = txt.split(/\r?\n/).map(function(s){ return s.trim(); }).filter(Boolean);
+    try {
+      localStorage.setItem('sp_siem_tor_exits',
+        JSON.stringify({ when: Date.now(), set: arr }));
+    } catch (e) {}
+    return new Set(arr);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+async function siemTagTorExits(alerts, runId) {
+  if (!alerts || !alerts.length) return;
+  var exits = await siemLoadTorExits();
+  if (!exits.size) return;
+  if (runId !== _SIEM_ENRICH_RUN) return;
+  var tagged = 0;
+  alerts.forEach(function(a) {
+    if (a.ip && exits.has(a.ip)) {
+      (a.tags = a.tags || []).push('tor');
+      a.correlation_note = (a.correlation_note ? a.correlation_note + ' / ' : '')
+                         + 'Source IP is a known Tor exit node';
+      tagged++;
+    }
+  });
+  if (tagged) siemAddLog('Tor: ' + tagged + ' alert(s) from known exit nodes', 'warn');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   §3.1 IP reputation lookup (URLhaus + ThreatFox)
+   Mutates: a.tags += 'known-bad', a.threatIntel = {urlhaus, threatfox}
+   Also bumps severity up to HIGH/CRITICAL when match found.
+───────────────────────────────────────────────────────────────────────── */
+async function siemEnrichIpReputation(alerts, runId) {
+  if (!alerts || !alerts.length) return;
+  if (typeof urlHausLookup !== 'function' || typeof threatFoxLookup !== 'function') return;
+
+  /* 1. Read-and-prune cache */
+  var cache = {};
+  try { cache = JSON.parse(localStorage.getItem('sp_siem_threatintel_cache') || '{}'); }
+  catch (e) { cache = {}; }
+
+  /* 2. Distinct queryable IPs */
+  var byIp = {};
+  alerts.forEach(function(a) {
+    if (a.ip && !siemIsPrivateOrInvalidIp(a.ip)) {
+      (byIp[a.ip] = byIp[a.ip] || []).push(a);
+    }
+  });
+  var distinct = Object.keys(byIp);
+  if (!distinct.length) return;
+
+  /* 3. Build the queue: only IPs missing from cache or stale */
+  var queue = distinct.filter(function(ip) {
+    var c = cache[ip];
+    return !c || !c.when || (Date.now() - c.when) > BSPEC.REP_TTL_MS;
+  });
+
+  var done = 0;
+  await _siemPool(queue, BSPEC.REP_CONCURRENCY, async function(ip) {
+    if (runId !== _SIEM_ENRICH_RUN) return;
+    var pair = await Promise.all([urlHausLookup(ip), threatFoxLookup(ip)]);
+    var uh = pair[0] || {};
+    var tf = pair[1] || {};
+    cache[ip] = {
+      when: Date.now(),
+      urlhaus:   uh.found  ? { online: uh.online || 0, offline: uh.offline || 0,
+                                threat: uh.threat || null }
+                            : null,
+      threatfox: tf.found  ? { count:  (tf.iocs || []).length,
+                                type:   (tf.iocs && tf.iocs[0] && (tf.iocs[0].threat_type || tf.iocs[0].malware_printable)) || null }
+                            : null,
+    };
+    done++;
+    siemEnrichProgress('rep', done, queue.length);
+  });
+
+  try { localStorage.setItem('sp_siem_threatintel_cache', JSON.stringify(cache)); }
+  catch (e) {}
+
+  /* 4. Apply cache to alerts (covers both freshly-fetched and previously-cached IPs) */
+  if (runId !== _SIEM_ENRICH_RUN) return;
+  var bumped = 0, hits = 0;
+  distinct.forEach(function(ip) {
+    var c = cache[ip];
+    if (!c || (!c.urlhaus && !c.threatfox)) return;
+    byIp[ip].forEach(function(a) {
+      (a.tags = a.tags || []).push('known-bad');
+      a.threatIntel = { urlhaus: c.urlhaus, threatfox: c.threatfox };
+      var ord = (SEV_CONFIG[a.severity] || {}).order || 0;
+      if (ord < 3)                                  { a.severity = 'HIGH';     a.severityBumped = true; bumped++; }
+      if (ord < 4 && c.urlhaus && c.urlhaus.online > 0) { a.severity = 'CRITICAL'; a.severityBumped = true; }
+      hits++;
+    });
+  });
+  if (hits) siemAddLog('Threat-intel: ' + hits + ' alert(s) from known-bad IPs (' + bumped + ' severity-bumped)', 'crit');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ORCHESTRATOR — runs after first paint, updates UI as each pass finishes.
+───────────────────────────────────────────────────────────────────────── */
+var _SIEM_ENRICH_RUN = 0;     // monotonic counter so stale runs can bail
+
+function siemEnrichProgress(stage, done, total) {
+  var el = document.getElementById('siemEnrichStatus');
+  if (!el) return;
+  if (!total) { el.textContent = ''; el.style.display = 'none'; return; }
+  var labels = { asn:'Geo / ASN', tor:'Tor exits', rep:'Threat intel' };
+  el.style.display = 'inline-block';
+  el.textContent = '◴ ' + (labels[stage] || stage) + ' ' + done + '/' + total;
+}
+
+function siemEnrichDone() {
+  var el = document.getElementById('siemEnrichStatus');
+  if (!el) return;
+  el.style.display = 'none';
+  el.textContent = '';
+}
+
+function siemEnsureEnrichStatusEl() {
+  if (document.getElementById('siemEnrichStatus')) return;
+  /* Mount next to "DETECTED THREATS" section title */
+  var titles = document.querySelectorAll('#view-siem .siem-section-title');
+  for (var i = 0; i < titles.length; i++) {
+    if (/DETECTED\s+THREATS/i.test(titles[i].textContent)) {
+      var span = document.createElement('span');
+      span.id = 'siemEnrichStatus';
+      span.className = 'siem-enrich-status';
+      span.style.display = 'none';
+      titles[i].appendChild(span);
+      return;
+    }
+  }
+}
+
+async function siemRunEnrichment(alerts) {
+  if (!alerts || !alerts.length) return;
+  var distinctIps = new Set();
+  alerts.forEach(function(a){ if (a.ip && !siemIsPrivateOrInvalidIp(a.ip)) distinctIps.add(a.ip); });
+
+  /* Quota-protect: skip auto-run for very large sets — provide manual button */
+  if (distinctIps.size === 0) return;
+  if (distinctIps.size > BSPEC.ENRICH_MAX_DISTINCT_IPS) {
+    siemAddLog('Enrichment skipped — '+distinctIps.size+' distinct IPs > ' +
+               BSPEC.ENRICH_MAX_DISTINCT_IPS+'. Use the Enrich button to run manually.', 'warn');
+    siemShowEnrichButton(true);
+    return;
+  }
+
+  siemEnsureEnrichStatusEl();
+  var runId = ++_SIEM_ENRICH_RUN;
+  siemAddLog('Enrichment started: '+distinctIps.size+' distinct IPs', 'info');
+
+  /* Geo + ASN first (fastest, drives Top Countries widget) */
+  await siemEnrichAsn(alerts, runId);
+  if (runId !== _SIEM_ENRICH_RUN) return;
+  siemEnrichRepaint();
+
+  /* Tor exits next — single fetch, tag many */
+  await siemTagTorExits(alerts, runId);
+  if (runId !== _SIEM_ENRICH_RUN) return;
+  siemEnrichRepaint();
+
+  /* Threat intel last (slowest, two POSTs per IP) */
+  await siemEnrichIpReputation(alerts, runId);
+  if (runId !== _SIEM_ENRICH_RUN) return;
+  siemEnrichRepaint();
+
+  siemEnrichDone();
+  siemAddLog('Enrichment complete', 'ok');
+}
+
+/* Re-render after each enrichment pass so the user sees progress live. */
+function siemEnrichRepaint() {
+  /* Severity counters may have shifted */
+  if (SIEM.lastResult && SIEM.lastResult.alerts) {
+    var sev = {};
+    SIEM.lastResult.alerts.forEach(function(a){ sev[a.severity] = (sev[a.severity]||0)+1; });
+    if (typeof siemRenderSeverityCounters === 'function')
+      siemRenderSeverityCounters(sev);
+    if (typeof siemRenderTimelineHisto === 'function')
+      siemRenderTimelineHisto(SIEM.lastResult.alerts);
+  }
+  /* Re-render alerts table preserving the filter */
+  if (typeof siemRefreshAlertsView === 'function') siemRefreshAlertsView();
+  else if (typeof siemRenderAlertsTable === 'function' && SIEM.lastResult)
+    siemRenderAlertsTable(SIEM.lastResult.alerts || []);
+}
+
+/* Manual "Enrich now" button shown when auto-skip kicked in */
+function siemShowEnrichButton(show) {
+  var existing = document.getElementById('siemEnrichManualBtn');
+  if (!show) { if (existing) existing.remove(); return; }
+  if (existing) return;
+  siemEnsureEnrichStatusEl();
+  var titles = document.querySelectorAll('#view-siem .siem-section-title');
+  for (var i = 0; i < titles.length; i++) {
+    if (/DETECTED\s+THREATS/i.test(titles[i].textContent)) {
+      var btn = document.createElement('button');
+      btn.id = 'siemEnrichManualBtn';
+      btn.className = 'siem-enrich-manual-btn';
+      btn.textContent = 'Enrich threat-intel';
+      btn.title = 'Run geo / ASN / Tor / URLhaus / ThreatFox enrichment on the current alerts';
+      btn.onclick = function(){
+        btn.remove();
+        if (SIEM.lastResult && SIEM.lastResult.alerts) {
+          /* Bypass quota guard by calling the inner functions directly */
+          var runId = ++_SIEM_ENRICH_RUN;
+          (async function() {
+            await siemEnrichAsn(SIEM.lastResult.alerts, runId);
+            siemEnrichRepaint();
+            await siemTagTorExits(SIEM.lastResult.alerts, runId);
+            siemEnrichRepaint();
+            await siemEnrichIpReputation(SIEM.lastResult.alerts, runId);
+            siemEnrichRepaint();
+            siemEnrichDone();
+          })();
+        }
+      };
+      titles[i].appendChild(btn);
+      return;
+    }
+  }
+}
+
+/* ─── Hook enrichment into siemHandleResult — runs AFTER first paint ─────── */
+(function(){
+  if (typeof siemHandleResult !== 'function' || siemHandleResult._enrich_wrapped) return;
+  var _orig = siemHandleResult;
+  siemHandleResult = function(data) {
+    /* Reset Milestone-A time-range filter on every new analysis. Without
+       this, a "5m" filter set on a previous run uses absolute timestamps
+       that excluded everything from the new dataset, leaving the table
+       blank even though new alerts exist. */
+    if (typeof SIEM_TIMERANGE !== 'undefined') {
+      SIEM_TIMERANGE.active  = false;
+      SIEM_TIMERANGE.preset  = 'all';
+      SIEM_TIMERANGE.startMs = null;
+      SIEM_TIMERANGE.endMs   = null;
+      if (typeof siemSyncTimeRangeUI === 'function') siemSyncTimeRangeUI();
+    }
+    /* Cancel any in-flight enrichment from a previous run by bumping the
+       monotonic counter — workers check this and bail. */
+    if (typeof _SIEM_ENRICH_RUN !== 'undefined') _SIEM_ENRICH_RUN++;
+    /* Hide any leftover "manual enrich" button from a prior big run. */
+    if (typeof siemShowEnrichButton === 'function') siemShowEnrichButton(false);
+
+    _orig.apply(this, arguments);
+    if (!data || !data.success || !data.alerts || !data.alerts.length) return;
+    /* Defer to the next tick so the initial render is painted first. */
+    setTimeout(function(){ siemRunEnrichment(data.alerts); }, 50);
+  };
+  siemHandleResult._enrich_wrapped = true;
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UI: badge rendering for enrichment results
+   We monkey-patch the two existing alert-row renderers (the unfiltered table
+   and the filtered version) so each row can display: provider tag, TOR pill,
+   KNOWN-BAD chip, and a severity-bumped indicator.
+═══════════════════════════════════════════════════════════════════════════ */
+
+function siemEnrichBadges(alert) {
+  var html = '';
+  if (alert.threatIntel) {
+    var src = [];
+    if (alert.threatIntel.urlhaus)   src.push('URLhaus' + (alert.threatIntel.urlhaus.online>0?' (active)':''));
+    if (alert.threatIntel.threatfox) src.push('ThreatFox');
+    html += '<span class="siem-tag siem-tag-bad" title="Known-bad: '+escHtml(src.join(' + '))+'">KNOWN-BAD</span>';
+  }
+  if (alert.tags && alert.tags.indexOf('tor') !== -1) {
+    html += '<span class="siem-tag siem-tag-tor" title="Source IP is a known Tor exit node">TOR</span>';
+  }
+  if (alert.asnProv && alert.asnProv !== 'unknown' && alert.asnKind && alert.asnKind !== 'normal') {
+    var kindClass = 'siem-tag-asn';
+    if (alert.asnKind === 'cdn')         kindClass += ' siem-tag-asn-cdn';
+    else if (alert.asnKind === 'cloud')  kindClass += ' siem-tag-asn-cloud';
+    html += '<span class="siem-tag '+kindClass+'" title="ASN classifier: '+escHtml(alert.asnKind)+'">'+
+            escHtml(String(alert.asnProv).toUpperCase())+'</span>';
+  }
+  if (alert.severityBumped) {
+    html += '<span class="siem-bump" title="Severity raised by threat-intel match">↑</span>';
+  }
+  if (alert.geo && alert.geo.cc) {
+    html += '<span class="siem-tag siem-tag-cc siem-filterable" '+
+            'data-field="cc" data-val="'+escHtml(alert.geo.cc)+'" '+
+            'title="'+escHtml((alert.geo.country || alert.geo.cc) + (alert.geo.city ? ' / '+alert.geo.city : ''))+
+            ' — click to filter">'+escHtml(alert.geo.cc)+'</span>';
+  }
+  return html;
+}
+
+/* Inject badges into the IP cell of each rendered alert row.
+   We do it as a post-render DOM pass: cleaner than trying to monkey-patch
+   the existing string-concat renderers. */
+function siemDecorateAlertRows() {
+  var tbody = document.getElementById('siemAlertsBody');
+  if (!tbody) return;
+  var cache = (typeof siemRenderAlertsTable !== 'undefined' &&
+               siemRenderAlertsTable._cache) ? siemRenderAlertsTable._cache : [];
+  if (!cache.length) return;
+
+  var rows = tbody.querySelectorAll('tr.siem-row');
+  rows.forEach(function(tr) {
+    var idx = -1;
+    /* The row's onclick is "siemToggleDetail(<idx>)" */
+    var oc = tr.getAttribute('onclick') || '';
+    var m = oc.match(/siemToggleDetail\((\d+)\)/);
+    if (m) idx = parseInt(m[1], 10);
+    if (idx < 0 || !cache[idx]) return;
+    var alert = cache[idx];
+    var ipCell = tr.children[2];   /* sev | type | IP | ts | endpoint | score */
+    if (!ipCell) return;
+
+    /* Idempotency: clear any previously-injected badge container */
+    var prev = ipCell.querySelector('.siem-badge-strip');
+    if (prev) prev.remove();
+
+    var badges = siemEnrichBadges(alert);
+    if (!badges) return;
+    var strip = document.createElement('span');
+    strip.className = 'siem-badge-strip';
+    strip.innerHTML = badges;
+    ipCell.appendChild(strip);
+  });
+}
+
+/* Wrap the two render functions to call siemDecorateAlertRows after each paint */
+(function(){
+  if (typeof siemRenderAlertsTable === 'function' && !siemRenderAlertsTable._enrich_decorated) {
+    var _orig = siemRenderAlertsTable;
+    siemRenderAlertsTable = function() {
+      var r = _orig.apply(this, arguments);
+      siemDecorateAlertRows();
+      return r;
+    };
+    /* Preserve cache slot used by the original via patch in siem.js L920ish */
+    siemRenderAlertsTable._cache    = _orig._cache;
+    siemRenderAlertsTable._enrich_decorated = true;
+  }
+  if (typeof siemRenderAlertsTableFiltered === 'function' && !siemRenderAlertsTableFiltered._enrich_decorated) {
+    var _orig2 = siemRenderAlertsTableFiltered;
+    siemRenderAlertsTableFiltered = function() {
+      var r = _orig2.apply(this, arguments);
+      siemDecorateAlertRows();
+      return r;
+    };
+    siemRenderAlertsTableFiltered._enrich_decorated = true;
+  }
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CSS for Milestone B badges + status strip
+═══════════════════════════════════════════════════════════════════════════ */
+(function(){
+  if (document.getElementById('siemMilestoneBStyles')) return;
+  var s = document.createElement('style');
+  s.id = 'siemMilestoneBStyles';
+  s.textContent = [
+    '.siem-badge-strip{display:inline-flex;flex-wrap:wrap;gap:3px;margin-left:6px;vertical-align:middle}',
+    '.siem-tag{display:inline-block;padding:1px 5px;font-size:9px;font-weight:700;font-family:var(--mono,monospace);' +
+      'letter-spacing:.04em;border-radius:3px;border:1px solid;line-height:1.4}',
+    '.siem-tag-bad{background:rgba(255,107,107,.16);color:#ff6b6b;border-color:rgba(255,107,107,.4)}',
+    '.siem-tag-tor{background:rgba(157,123,255,.14);color:#9d7bff;border-color:rgba(157,123,255,.4)}',
+    '.siem-tag-asn{background:rgba(125,133,151,.14);color:var(--text2,#7d8597);border-color:rgba(125,133,151,.35)}',
+    '.siem-tag-asn-cdn{background:rgba(230,200,77,.12);color:#e6c84d;border-color:rgba(230,200,77,.4)}',
+    '.siem-tag-asn-cloud{background:rgba(157,123,255,.12);color:#9d7bff;border-color:rgba(157,123,255,.35)}',
+    '.siem-tag-cc{background:rgba(77,196,255,.10);color:#4dc4ff;border-color:rgba(77,196,255,.30);cursor:pointer}',
+    '.siem-tag-cc:hover{background:rgba(77,196,255,.20)}',
+    '.siem-bump{display:inline-block;color:#ff6b6b;font-weight:900;margin-left:4px;font-size:11px}',
+    '.siem-enrich-status{display:inline-block;margin-left:10px;padding:1px 8px;font-size:10px;' +
+      'font-family:var(--mono,monospace);color:var(--accent,#4dc4ff);background:rgba(77,196,255,.08);' +
+      'border:1px solid rgba(77,196,255,.25);border-radius:3px;letter-spacing:.04em}',
+    '.siem-enrich-manual-btn{margin-left:10px;padding:2px 10px;font-size:10px;font-family:var(--mono,monospace);' +
+      'background:rgba(255,107,107,.10);color:#ff6b6b;border:1px solid rgba(255,107,107,.35);' +
+      'border-radius:4px;cursor:pointer;letter-spacing:.04em}',
+    '.siem-enrich-manual-btn:hover{background:rgba(255,107,107,.20)}',
+  ].join('\n');
+  document.head.appendChild(s);
+})();

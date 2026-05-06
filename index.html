@@ -612,7 +612,7 @@
               type="text"
               id="siemLogSearchInput"
               class="siem-logsearch-input"
-              placeholder="Search logs… IP, keyword, path, status code"
+              placeholder='KQL + glob/regex: ip:10.0.0.*  path:/ad*.js  ua:/sqlmap|nikto/  status:>=400  -200  "GET /api"'
               autocomplete="off"
               oninput="siemLogSearchApply()"
               onkeydown="siemLogSearchNav(event)"
