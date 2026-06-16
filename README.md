@@ -9,6 +9,9 @@ Advanced static source code auditing dashboard built for security researchers, b
 ShadeParse is a browser-based static security analysis tool designed to inspect code snippets, bundled JavaScript, or reconstructed source files through a clean dashboard interface. It focuses purely on source code auditing and vulnerability pattern detection.
 
 ---
+## Trial Demo 
+- Access Here: https://shade-parse.vercel.app/
+- Login with: Username:`getsethack` | Password:`getsethack` 
 
 ## Features
 
